@@ -1,0 +1,9 @@
+description = "Fan a question out to several AI CLIs in parallel, then synthesize one recommendation."
+
+prompt = """
+Fan this question out across the ready providers and collect their answers:
+
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" consult {{args}}}
+
+Now synthesize: state the consensus, surface disagreements (noting which model held which view), and give one recommendation with reasoning. Do not paste the raw blocks back — the synthesized verdict is the deliverable.
+"""

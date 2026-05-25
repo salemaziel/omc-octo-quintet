@@ -1,0 +1,9 @@
+description = "Run a two-round cross-model debate on a contested question, then synthesize."
+
+prompt = """
+Run a two-round debate across the ready providers:
+
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate {{args}}}
+
+Synthesize based on the round-2 refined positions: where the models converged, what stayed contested and why, and one recommendation with reasoning.
+"""

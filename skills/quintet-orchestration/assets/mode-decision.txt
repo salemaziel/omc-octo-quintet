@@ -1,0 +1,32 @@
+Quintet mode decision tree — team vs fleet
+===========================================
+
+START: user names ≥2 quintet CLIs, or says "quintet"
+  │
+  ├─ Run `quintet doctor` ──────────────────────────────┐
+  │                                                      │
+  │   zero providers ready? ── YES ─▶ STOP. Name the     │
+  │                                   CLIs to auth/install,│
+  │                                   don't fake success. │
+  │            │ NO                                       │
+  ▼            ▼                                          │
+Does the request PRODUCE FILE EDITS or OPINIONS?          │
+  │                                                       │
+  ├─ EDITS / build / refactor / tests ──▶ TEAM MODE       │
+  │     quintet team <N:provider,...> "<goal>" \          │
+  │       --name <slug> --cwd <repo> --tasks "s1||s2||…"  │
+  │     → decompose by file ownership (no overlap)        │
+  │     → monitor: status / capture / taskboard           │
+  │     → VERIFY artifacts (run tests), then shutdown      │
+  │                                                       │
+  └─ OPINIONS / decision / review ──────▶ FLEET MODE       │
+        ├─ quick breadth ........... quintet consult "<q>" │
+        ├─ contested decision ...... quintet debate  "<q>" │
+        └─ review a diff/file ...... quintet review  "<t>" │
+        → synthesize: consensus + disagreement + ONE call  │
+        → never paste raw blocks back                      │
+                                                           │
+AMBIGUOUS ("improve this module")? ── ask the user: ◀──────┘
+  "Should the models WRITE the change (team) or PROPOSE it (fleet)?"
+
+Common compound flow:  FLEET to decide  ─▶  TEAM to build.

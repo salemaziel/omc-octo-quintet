@@ -1,0 +1,6 @@
+{
+  "name": "quintet",
+  "version": "0.1.0",
+  "description": "Orchestrate five coding-agent CLIs (Claude Code, Codex, Gemini, Copilot, Qwen) as one fleet: persistent tmux worker teams plus one-shot consult / debate / multi-model review.",
+  "contextFileName": "GEMINI.md"
+}

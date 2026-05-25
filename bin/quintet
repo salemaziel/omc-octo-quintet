@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# quintet — unified CLI-agent orchestrator.
+#
+#   Persistent tmux worker teams across claude / codex / gemini / copilot / qwen,
+#   plus one-shot multi-AI fleet dispatch (consult / debate / review).
+#
+# Entry point. Sources the lib/, dispatches subcommands. Safe to symlink onto PATH.
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+
+QUINTET_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+export QUINTET_ROOT
+# shellcheck source=/dev/null
+source "${QUINTET_ROOT}/lib/common.sh"
+source "${QUINTET_ROOT}/lib/providers.sh"
+source "${QUINTET_ROOT}/lib/reliability.sh"
+source "${QUINTET_ROOT}/lib/tmux.sh"
+source "${QUINTET_ROOT}/lib/team.sh"
+source "${QUINTET_ROOT}/lib/fleet.sh"
+
+VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.1.0")"
+
+usage() {
+cat <<'EOF'
+quintet — orchestrate Claude Code, Codex, Gemini, Copilot, and Qwen CLIs.
+
+TEAM MODE (persistent tmux worker teams):
+  quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||t2||..."]
+  quintet team status   <name>
+  quintet team capture  <name> [worker] [lines]
+  quintet team send      <name> <worker> "<text>"
+  quintet team shutdown  <name> [--force]
+  quintet team list
+
+  <spec> = comma-separated N:provider tokens, e.g.  2:claude,1:qwen,1:copilot
+
+FLEET MODE (one-shot multi-AI dispatch):
+  quintet fleet   "<prompt>" [providers]      # fan out, show every answer
+  quintet consult "<prompt>" [providers]      # alias of fleet (advisory)
+  quintet debate  "<question>" [providers]    # 2-round cross-critique
+  quintet review  "<diff|file|desc>" [providers]
+
+  [providers] = "all" (default) | comma list, e.g.  claude,codex,gemini
+
+UTILITIES:
+  quintet doctor          # check CLIs, auth, tmux, jq
+  quintet providers       # list provider readiness
+  quintet version
+EOF
+}
+
+cmd_doctor() {
+    echo "quintet ${VERSION} — environment check"
+    echo
+    printf '%-10s %-12s %s\n' "TOOL" "STATUS" "DETAIL"
+    printf '%-10s %-12s %s\n' "tmux" "$(quintet_tmux_available && echo ok || echo MISSING)" "$(command -v tmux || echo 'team mode unavailable')"
+    printf '%-10s %-12s %s\n' "jq"   "$(have_jq && echo ok || echo missing)" "$(command -v jq || echo 'optional, manual JSON fallback used')"
+    echo
+    printf '%-10s %-12s %-14s %s\n' "PROVIDER" "INSTALLED" "AUTH" "HINT"
+    local p inst auth
+    for p in "${QUINTET_PROVIDERS[@]}"; do
+        if quintet_provider_installed "$p"; then inst="yes"; else inst="NO"; fi
+        auth="$(quintet_provider_auth "$p")"
+        local hint=""
+        [[ "$inst" == "NO" ]] && hint="$(quintet_provider_install_hint "$p")"
+        [[ "$inst" == "yes" && "$auth" == "none" ]] && hint="not authenticated"
+        printf '%s %-8s %-12s %-14s %s\n' "$(quintet_provider_emoji "$p")" "$p" "$inst" "$auth" "$hint"
+    done
+    echo
+    local ready=0
+    for p in "${QUINTET_PROVIDERS[@]}"; do quintet_provider_ready "$p" && ready=$((ready+1)); done
+    echo "Ready providers: ${ready}/${#QUINTET_PROVIDERS[@]}"
+    [[ "$ready" -ge 1 ]] || { echo "⚠️  No providers ready — install/authenticate at least one."; return 1; }
+}
+
+cmd_providers() {
+    local p
+    for p in "${QUINTET_PROVIDERS[@]}"; do
+        printf '%s %-8s installed=%-3s auth=%-12s ready=%s\n' \
+            "$(quintet_provider_emoji "$p")" "$p" \
+            "$(quintet_provider_installed "$p" && echo yes || echo no)" \
+            "$(quintet_provider_auth "$p")" \
+            "$(quintet_provider_ready "$p" && echo yes || echo no)"
+    done
+}
+
+main() {
+    local cmd="${1:-help}"; shift || true
+    case "$cmd" in
+        team)
+            local sub="${1:-}"
+            case "$sub" in
+                status)   shift; quintet_team_status "$@" ;;
+                capture)  shift; quintet_team_capture "$@" ;;
+                send)     shift; quintet_team_send "$@" ;;
+                shutdown) shift; quintet_team_shutdown "$@" ;;
+                list)     shift; quintet_team_list ;;
+                ""|--help|-h) usage ;;
+                *)        quintet_team_start "$@" ;;   # team <spec> <task> ...
+            esac ;;
+        fleet|consult) quintet_fleet_parallel "$@" ;;
+        debate)        quintet_fleet_debate "$@" ;;
+        review)        quintet_fleet_review "$@" ;;
+        doctor)        cmd_doctor ;;
+        providers)     cmd_providers ;;
+        version|-v|--version) echo "quintet ${VERSION}" ;;
+        help|-h|--help|"") usage ;;
+        *) log ERROR "unknown command: $cmd"; usage; exit 1 ;;
+    esac
+}
+
+main "$@"

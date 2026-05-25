@@ -1,0 +1,15 @@
+description = "Launch a persistent tmux worker team to build/refactor in parallel across CLIs."
+
+prompt = """
+The user wants a parallel worker team for: {{args}}
+
+The bundled CLI is at `~/.gemini/extensions/quintet/bin/quintet` (fall back to `quintet` on PATH if that's missing). Use it as `$QBIN` throughout:
+
+1. Resolve and check readiness: `!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" doctor}`. Build the pool from ready providers.
+2. Decompose the work into non-overlapping, file/module-scoped subtasks so no two workers touch the same paths. Map each to a provider (Codex/Claude → implementation, Gemini → breadth/docs, Copilot → extra perspective, Qwen → bulk).
+3. Launch with `$QBIN team <spec> "<goal>" --name <slug> --cwd <repo> --tasks "s1||s2||..."`, then `$QBIN team capture <name>` to confirm every worker came up.
+4. Monitor via `$QBIN team status` / `$QBIN team capture` and the taskboard, steering with `$QBIN team send` as needed.
+5. Verify the real files and tests — not the self-reported taskboard — then `$QBIN team shutdown <name>`.
+
+Confirm scope with the user before launching write-capable workers on an important repo.
+"""

@@ -1,0 +1,24 @@
+{
+  "name": "quintet",
+  "version": "0.1.0",
+  "description": "Unified CLI-agent orchestrator. Drives Claude Code, OpenAI Codex, Google Gemini, GitHub Copilot, and Qwen Code CLIs in two modes: persistent tmux worker teams and one-shot multi-AI fleet dispatch / debate / review.",
+  "author": {
+    "name": "salemaziel",
+    "email": "claude@viadelweb.cloud"
+  },
+  "license": "MIT",
+  "keywords": [
+    "copilot",
+    "multi-agent",
+    "orchestration",
+    "tmux",
+    "codex",
+    "gemini",
+    "qwen",
+    "fleet",
+    "debate",
+    "code-review"
+  ],
+  "agents": ".copilot/agents/",
+  "skills": "skills/"
+}

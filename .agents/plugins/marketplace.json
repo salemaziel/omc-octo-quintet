@@ -1,0 +1,22 @@
+{
+  "name": "vdw-claude-plugins",
+  "interface": {
+    "displayName": "Via del Web Plugins"
+  },
+  "plugins": [
+    {
+      "name": "quintet",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/salemaziel/omc-octo-quintet.git",
+        "path": "./",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+description = "Get a multi-model code review of a diff or file, then synthesize a go/no-go."
+
+prompt = """
+Send the target for multi-model review. If the user gave a diff or file path use it; otherwise default to the staged diff:
+
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" review {{args}}}
+
+Synthesize the per-model findings into one triage: blocking issues (and how many models flagged each), worth-fixing items, then a clear go/no-go recommendation. Don't paste the raw per-model walls of text.
+"""

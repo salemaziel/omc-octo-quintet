@@ -1,0 +1,9 @@
+description = "Check which quintet provider CLIs are installed and authenticated."
+
+prompt = """
+Run the quintet readiness check on the bundled binary and report the provider pool:
+
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" doctor}
+
+Summarize which providers are ready, and name the one-time fix for any showing `auth=none` or missing. Do not route work to unready providers.
+"""

@@ -1,0 +1,39 @@
+{
+  "name": "quintet",
+  "version": "0.1.0",
+  "description": "Unified CLI-agent orchestrator. Drives Claude Code, OpenAI Codex, Google Gemini, GitHub Copilot, and Qwen Code CLIs in two modes: persistent tmux worker teams and one-shot multi-AI fleet dispatch / debate / review.",
+  "author": {
+    "name": "salemaziel",
+    "url": "https://github.com/salemaziel"
+  },
+  "homepage": "https://github.com/salemaziel/omc-octo-quintet",
+  "repository": "https://github.com/salemaziel/omc-octo-quintet",
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "tmux",
+    "codex",
+    "gemini",
+    "copilot",
+    "qwen",
+    "fleet",
+    "debate",
+    "code-review"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Quintet",
+    "shortDescription": "Orchestrate five coding-agent CLIs as one fleet.",
+    "longDescription": "Quintet drives Claude Code, OpenAI Codex, Google Gemini, GitHub Copilot, and Qwen Code through one entry point, in two modes: persistent tmux worker teams that edit files in parallel, and one-shot fleet dispatch for consult / debate / multi-model code review with a circuit-breaker reliability layer.",
+    "developerName": "salemaziel",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/salemaziel/omc-octo-quintet",
+    "defaultPrompt": [
+      "Use Quintet to run codex, gemini, and claude on this task in parallel.",
+      "Use Quintet to debate gRPC vs REST across the models and synthesize a recommendation.",
+      "Use Quintet to spin up a tmux worker team to build this feature."
+    ]
+  }
+}

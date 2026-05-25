@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "vdw-claude-plugins",
+  "owner": {
+    "name": "salemaziel",
+    "email": "claude@viadelweb.cloud"
+  },
+  "description": "Via del Web plugin marketplace for coding-CLI agents.",
+  "metadata": {
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "quintet",
+      "source": "./",
+      "displayName": "Quintet",
+      "description": "One orchestrator for five coding-agent CLIs (Claude Code, Codex, Gemini, Copilot, Qwen): persistent tmux worker teams plus one-shot multi-AI fleet dispatch / debate / review.",
+      "version": "0.1.0",
+      "author": {
+        "name": "salemaziel"
+      },
+      "homepage": "https://github.com/salemaziel/omc-octo-quintet",
+      "repository": "https://github.com/salemaziel/omc-octo-quintet",
+      "license": "MIT",
+      "category": "orchestration",
+      "keywords": [
+        "multi-agent",
+        "orchestration",
+        "tmux",
+        "fleet",
+        "debate",
+        "code-review"
+      ]
+    }
+  ]
+}
