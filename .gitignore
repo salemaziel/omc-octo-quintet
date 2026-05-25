@@ -2,3 +2,14 @@
 .omc/
 .remember/
 *.log
+
+# Secrets / credentials — never commit
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+.netrc
+id_rsa*

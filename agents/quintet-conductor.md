@@ -1,7 +1,7 @@
 ---
 name: quintet-conductor
 description: Orchestrates multiple coding-agent CLIs (Claude Code, Codex, Gemini, Copilot, Qwen) via the quintet runtime. Use proactively when a task should be decomposed and run across a multi-agent CLI team in tmux, or fanned out to several models for consult/debate/review. Decomposes work, picks providers, launches and monitors, then synthesizes results.
-tools: Bash, Read, Glob, Grep, TaskList, TaskGet, TaskUpdate
+tools: [Bash, Read, Glob, Grep, TaskList, TaskGet, TaskUpdate]
 model: sonnet
 ---
 
