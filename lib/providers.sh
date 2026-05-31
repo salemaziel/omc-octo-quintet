@@ -166,10 +166,10 @@ quintet_provider_oneshot() {
 quintet_provider_launch_cmd() {
     local provider="$1"
     case "$provider" in
-        claude)  echo "${QUINTET_CLAUDE_LAUNCH:-claude --permission-mode acceptEdits}" ;;
-        codex)   echo "${QUINTET_CODEX_LAUNCH:-codex}" ;;
+        claude)  echo "${QUINTET_CLAUDE_LAUNCH:-claude --permission-mode bypassPermissions}" ;;
+        codex)   echo "${QUINTET_CODEX_LAUNCH:-codex --yolo}" ;;
         gemini)  echo "${QUINTET_GEMINI_LAUNCH:-gemini --approval-mode yolo --skip-trust}" ;;
-        copilot) echo "${QUINTET_COPILOT_LAUNCH:-copilot}" ;;
+        copilot) echo "${QUINTET_COPILOT_LAUNCH:-copilot --allow-all-tools}" ;;
         qwen)    echo "${QUINTET_QWEN_LAUNCH:-qwen --approval-mode yolo}" ;;
         *)       echo "$(quintet_provider_bin "$provider")" ;;
     esac

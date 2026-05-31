@@ -110,7 +110,7 @@ The discipline that makes this work: **scope by files, verify by artifacts.** Ev
 
 - **File ownership**: never give two workers overlapping files. This is the #1 cause of corruption. Scope subtasks by directory/module.
 - **Verify launch**: after starting, run `team capture` to confirm each agent REPL came up and accepted the task. Cold-start warmup is provider-specific (tune via `QUINTET_<PROVIDER>_WARMUP` seconds).
-- **Autonomy flags**: defaults launch agents in permissive modes (e.g. `claude --permission-mode acceptEdits`, `gemini/qwen --approval-mode yolo`). Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing.
+- **Autonomy flags**: defaults launch agents in **fully unattended** modes (`claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini/qwen --approval-mode yolo`). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
 - **Verify artifacts, not the taskboard**: the taskboard is self-reported; the files and tests are the proof.
 - **No providers ready**: if `doctor` reports an empty pool, the launch fails — authenticate at least one CLI first (see `skills/quintet-orchestration`).
 
@@ -150,7 +150,7 @@ The bottleneck is almost never compute — it's *decomposition quality*. Three w
 
 ## Sandboxing and autonomy
 
-Workers launch in **permissive** modes by default so they can work without stopping for approvals — `claude --permission-mode acceptEdits`, `gemini`/`qwen --approval-mode yolo`, and so on. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
+Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini`/`qwen --approval-mode yolo`. This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
 
 Tighten it per provider with `QUINTET_<P>_LAUNCH`, which overrides the entire launch command for that provider's workers:
 
