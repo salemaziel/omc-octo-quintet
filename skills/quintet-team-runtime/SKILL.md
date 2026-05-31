@@ -198,9 +198,13 @@ See also:
 
 - `skills/quintet-orchestration` — the router that decides team vs fleet and handles readiness checks.
 - `skills/quintet-fleet-dispatch` — the one-shot, read-only counterpart for questions and reviews.
+- `skills/quintet-discipline` — a worker's `DONE` is self-reported, not proof; verify artifacts before claiming the team succeeded.
 
-## Detailed references
+## When to load the references
 
-- Provider→subtask mapping: [references/provider-strengths.md](references/provider-strengths.md)
-- Coordination model, worker naming, full failure table: [references/operations.md](references/operations.md)
-- Taskboard skeleton to copy: [assets/taskboard-template.md](assets/taskboard-template.md)
+Load on demand at the decision point — not up front:
+
+- **Before composing the `--tasks` split**, read [references/provider-strengths.md](references/provider-strengths.md) for the canonical provider→subtask mapping (which model owns implementation vs research vs bulk).
+- **When seeding `taskboard.md` for a new team**, copy the skeleton from [assets/taskboard-template.md](assets/taskboard-template.md).
+- **When recovering an orphaned team or diagnosing a worker that won't launch**, read [references/operations.md](references/operations.md) for worker naming, the coordination model, and the full failure table.
+- **Do NOT load** these while merely monitoring a healthy running team — `team status` / `team capture` and the body above cover the steady state.

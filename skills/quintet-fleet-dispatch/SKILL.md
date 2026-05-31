@@ -205,8 +205,12 @@ See also:
 
 - `skills/quintet-orchestration` — the router that picks fleet vs team and checks readiness.
 - `skills/quintet-team-runtime` — the persistent, file-editing counterpart.
+- `skills/quintet-discipline` — before reporting any provider's answer as fact, verify it; a confident answer is not evidence.
 
-## Detailed references
+## When to load the references
 
-- Per-mode mechanics, reliability tuning, and empty-pool recovery: [references/modes-and-reliability.md](references/modes-and-reliability.md)
-- Annotated sample debate transcript: [assets/debate-output-example.txt](assets/debate-output-example.txt)
+Load on demand at the decision point — not up front:
+
+- **Before running a `debate`** and synthesizing it, read [assets/debate-output-example.txt](assets/debate-output-example.txt) to see how round-2 cross-critique renders and what a good synthesis pulls from it.
+- **When a provider keeps failing, timing out, or the pool looks empty**, read [references/modes-and-reliability.md](references/modes-and-reliability.md) for per-mode mechanics, reliability tuning, and empty-pool recovery.
+- **Do NOT load** either file for a plain `consult` that already returned clean answers — the body above is sufficient to synthesize and report.
