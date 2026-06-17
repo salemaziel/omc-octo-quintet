@@ -37,22 +37,19 @@ This returns a per-provider readiness line. Never claim a provider ran if `docto
 
 ### Reading doctor output
 
-The human-readable form is one line per provider. A machine-readable form is available for scripting and is the contract other tools depend on:
+`doctor` prints a fixed-width text table — a `PROVIDER / INSTALLED / AUTH / HINT` row per provider, followed by a `Ready providers: N/5` line. `AUTH` is a real method token (`oauth`, `api-key`, `gh-cli`, `keychain`, `config`, `env:*`, `none`, or `unknown`), never the literal `ok`. It returns a non-zero exit code when zero providers are ready.
 
-```json
-{
-  "providers": [
-    { "name": "claude",  "installed": true,  "auth": "ok",   "ready": true },
-    { "name": "codex",   "installed": true,  "auth": "ok",   "ready": true },
-    { "name": "gemini",  "installed": true,  "auth": "ok",   "ready": true },
-    { "name": "copilot", "installed": true,  "auth": "ok",   "ready": true },
-    { "name": "qwen",    "installed": true,  "auth": "none", "ready": false }
-  ],
-  "ready_count": 4
-}
+For a parseable per-provider form, use `quintet providers`, which prints one line each:
+
+```text
+🟣 claude   installed=yes auth=oauth    ready=yes
+🔴 codex    installed=yes auth=oauth    ready=yes
+🟡 gemini   installed=yes auth=oauth    ready=yes
+🟢 copilot  installed=yes auth=gh-cli   ready=yes
+🔵 qwen     installed=yes auth=none     ready=no
 ```
 
-Build your pool from entries where `ready` is `true`. A provider with `auth=none` is installed but unauthenticated — name it to the user as a one-time fix, don't treat it as broken.
+Build your pool from entries where `ready=yes`. A provider with `auth=none` is installed but unauthenticated — name it to the user as a one-time fix, don't treat it as broken.
 
 ## Choosing the mode
 

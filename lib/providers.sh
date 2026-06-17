@@ -174,7 +174,10 @@ quintet_provider_launch_cmd() {
         codex)   echo "${QUINTET_CODEX_LAUNCH:-codex --yolo}" ;;
         gemini)  echo "${QUINTET_GEMINI_LAUNCH:-gemini --approval-mode yolo --skip-trust}" ;;
         copilot) echo "${QUINTET_COPILOT_LAUNCH:-copilot --allow-all-tools}" ;;
-        qwen)    echo "${QUINTET_QWEN_LAUNCH:-qwen --approval-mode yolo}" ;;
+        # qwen is a Gemini-CLI fork WITHOUT --skip-trust; --approval-mode yolo auto-
+        # approves tool calls but the workspace stays untrusted, which blocks file
+        # writes. Set the trust env vars so a team worker can actually edit the worktree.
+        qwen)    echo "${QUINTET_QWEN_LAUNCH:-env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo}" ;;
         *)       echo "$(quintet_provider_bin "$provider")" ;;
     esac
 }
