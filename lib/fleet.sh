@@ -30,13 +30,29 @@ QUINTET_FAIL_RENDER_CAP="${QUINTET_FAIL_RENDER_CAP:-1500}"
 # follow-up prompt and before rendering noisy failure output.
 _quintet_clean_answer() {
     local text="$1" cap="${2:-$QUINTET_ANSWER_CAP}"
-    text=$(printf '%s' "$text" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g')
+    # `\x1b` in a sed pattern is a GNU extension; BSD sed (macOS default) doesn't
+    # honor it. Use an ANSI-C-quoted literal ESC so the strip works on both.
+    local esc=$'\e'
+    text=$(printf '%s' "$text" | sed -E "s/${esc}\\[[0-9;]*[a-zA-Z]//g")
     local n=${#text}
     if (( n > cap )); then
         text="${text:0:cap}
 …[truncated ${n}→${cap} chars]"
     fi
     printf '%s' "$text"
+}
+
+# Map a run-file basename to the provider that actually produced the answer.
+# Normal files are "<provider>.out". Fallback files are "<orig>__fallback_<real>.out";
+# the answer came from <real>, so attribute it there (noting it stood in for <orig>)
+# rather than mislabeling it as <orig>.
+_quintet_answer_label() {
+    local base="$1"
+    if [[ "$base" == *__fallback_* ]]; then
+        printf '%s (fallback for %s)' "${base##*__fallback_}" "${base%%__fallback_*}"
+    else
+        printf '%s' "$base"
+    fi
 }
 
 # Build a clean "ANSWERS" block from a fan-out dir: only providers that succeeded
@@ -51,7 +67,7 @@ _quintet_answers_block() {
         [[ "$st" == 0:* ]] || continue
         body=$(_quintet_clean_answer "$(cat "$f")")
         [[ -n "${body//[[:space:]]/}" ]] || continue
-        printf -- '--- %s ---\n%s\n\n' "${provider%%__*}" "$body"
+        printf -- '--- %s ---\n%s\n\n' "$(_quintet_answer_label "$provider")" "$body"
     done
 }
 
@@ -186,7 +202,7 @@ quintet_fleet_debate() {
     [[ -n "$question" ]] || die "fleet debate: missing question"
 
     local ts archive; ts="$(now_epoch)"
-    archive="${QUINTET_HOME}/debates/${ts}"
+    archive="${QUINTET_HOME:-$HOME/.quintet}/debates/${ts}"
     ensure_dir "$archive"
 
     log INFO "── debate round 1: independent positions ──"
@@ -204,7 +220,9 @@ quintet_fleet_debate() {
         rm -rf "$r1" 2>/dev/null || true
         echo
         echo "📁 Debate transcript: ${archive}/round1.md"
-        return 0
+        # All providers failed round 1 — signal failure so orchestrators don't
+        # treat an empty debate as a successful run.
+        return 1
     fi
 
     log INFO "── debate round 2: cross-critique ──"
