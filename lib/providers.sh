@@ -109,14 +109,18 @@ quintet_provider_ready() {
 # Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
-    local t_default="${QUINTET_TIMEOUT:-120}"
+    # Generous defaults: a cold-started headless CLI doing real reasoning routinely
+    # needs >120s. The earlier 90–120s ceilings were the main source of exit-124
+    # timeouts (compounded by agentic file-exploration, now suppressed by the
+    # advisory preamble in fleet.sh). Override per provider via QUINTET_<P>_TIMEOUT.
+    local t_default="${QUINTET_TIMEOUT:-240}"
     local timeout_secs
     case "$provider" in
         claude)  timeout_secs="${QUINTET_CLAUDE_TIMEOUT:-$t_default}" ;;
         codex)   timeout_secs="${QUINTET_CODEX_TIMEOUT:-$t_default}" ;;
         gemini)  timeout_secs="${QUINTET_GEMINI_TIMEOUT:-$t_default}" ;;
-        copilot) timeout_secs="${QUINTET_COPILOT_TIMEOUT:-90}" ;;
-        qwen)    timeout_secs="${QUINTET_QWEN_TIMEOUT:-90}" ;;
+        copilot) timeout_secs="${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
+        qwen)    timeout_secs="${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
         *)       timeout_secs="$t_default" ;;
     esac
 

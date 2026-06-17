@@ -135,9 +135,11 @@ The user gets a go/no-go, not three walls of text. That triage is the value flee
 | --- | --- | --- |
 | a provider is missing from the output | `auth=none` or open circuit breaker | `doctor` first; authenticate it or wait out the breaker cooldown |
 | `falling back → <other>` in the log | transient failure on the first provider | expected behavior — the fallback's answer is appended |
-| every provider times out | prompt too large or network slow | raise `QUINTET_<PROVIDER>_TIMEOUT` / `QUINTET_TIMEOUT` |
+| every provider times out (exit 124) | prompt too large, network slow, or a provider exploring the repo instead of answering | raise `QUINTET_<PROVIDER>_TIMEOUT` / `QUINTET_TIMEOUT`; the advisory preamble already suppresses file exploration |
 | empty result, no answers | zero providers ready | authenticate at least one CLI before dispatching |
+| breaker open before a run even starts | stale failures from a prior session | fixed by `QUINTET_CB_FAILURE_WINDOW_SECS` windowing; clear leftover state with `rm -f ~/.quintet/provider-state/<p>.cooldown` |
 | breaker keeps reopening | a provider is genuinely down | lower `QUINTET_CB_FAILURE_THRESHOLD` to fail fast and route around it |
+| debate round 2 fails with exit 126 | (historical) round-1 output too large for a single argv | fixed — round 2 now folds in only clean, length-capped successful answers |
 
 ## FAQ
 
@@ -183,12 +185,17 @@ Tune dispatch and reliability without editing the CLI:
 
 | Var | Purpose | Default |
 | --- | --- | --- |
-| `QUINTET_TIMEOUT` | global one-shot timeout, seconds | 120 |
-| `QUINTET_<P>_TIMEOUT` | per-provider one-shot timeout | 90–120 |
-| `QUINTET_CB_FAILURE_THRESHOLD` | failures before a provider's breaker opens | 3 |
+| `QUINTET_TIMEOUT` | global one-shot timeout, seconds | 240 |
+| `QUINTET_<P>_TIMEOUT` | per-provider one-shot timeout | inherits `QUINTET_TIMEOUT` |
+| `QUINTET_CB_FAILURE_THRESHOLD` | transient failures before a provider's breaker opens | 3 |
+| `QUINTET_CB_FAILURE_WINDOW_SECS` | only failures this recent count toward the threshold | 900 |
 | `QUINTET_CB_COOLDOWN_SECS` | how long an open breaker stays open | 300 |
+| `QUINTET_ADVISORY_PREAMBLE` | text-only framing prepended to every prompt (set empty to disable) | (no-explore instruction) |
+| `QUINTET_ANSWER_CAP` | max chars of each answer folded into debate round 2 | 8000 |
 
 `<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `GEMINI`, `COPILOT`, `QWEN`). Lower the threshold to fail fast on a flaky provider, or raise the timeout for large review diffs.
+
+**Breaker note:** the threshold counts only transient failures inside `QUINTET_CB_FAILURE_WINDOW_SECS`, so failures from a previous session no longer pre-trip the breaker on a fresh run. If a breaker is stuck open from old state, clear it with `rm -f ~/.quintet/provider-state/<provider>.cooldown` (or wait out the cooldown).
 
 ## Related skills
 

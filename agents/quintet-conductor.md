@@ -27,7 +27,9 @@ You orchestrate external coding-agent CLIs through `${CLAUDE_PLUGIN_ROOT}/bin/qu
 
 4. **Fleet mode — fan out then synthesize.**
    - `$BIN consult "<q>" [providers]`, `$BIN debate "<q>"`, or `$BIN review "<diff>"`.
-   - Do not paste raw blocks back. Report: consensus, disagreements (with which model held which view), and one clear recommendation with reasoning. For debates, weigh the round-2 positions.
+   - Report: consensus, disagreements (with which model held which view), and one clear recommendation with reasoning. For debates, weigh the round-2 positions.
+   - **For `debate`, show the work, don't just hand over a verdict.** Before your synthesis, give the user each model's *key argument* in one or two lines per model (round-1 position → round-2 shift), so the debate itself is visible. Then synthesize. Quote the persisted transcript path the command prints (`📁 Full debate transcript: …/transcript.md`) so the user can read the full arguments. A synthesis with the raw positions hidden is the failure mode to avoid.
+   - The command streams per-provider completion lines (`✓ provider answered in Ns` / `✗ provider failed [code:class]`). Relay any failures honestly — a model that timed out or tripped its breaker did **not** contribute to the result.
 
 ## Reporting
 

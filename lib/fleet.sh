@@ -10,6 +10,51 @@
 #   review   — frame the prompt as a code/diff review and aggregate findings.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Advisory framing prepended to every fleet prompt. Fleet is read-only and
+# one-shot, so we explicitly stop providers from wandering into agentic file
+# exploration / tool use — that exploration was the main cause of exit-124
+# timeouts (a cold CLI would spend the whole budget reading the repo instead of
+# answering). Override or disable via QUINTET_ADVISORY_PREAMBLE.
+QUINTET_ADVISORY_PREAMBLE="${QUINTET_ADVISORY_PREAMBLE:-IMPORTANT: This is a one-shot advisory question, not a coding session. Do NOT read, list, or explore files. Do NOT run shell commands or invoke tools. Answer directly, from reasoning, as concise plain text.}"
+
+# Max characters of any single answer we fold back into a follow-up prompt
+# (debate round 2). Keeps the assembled prompt well under the 128KB single-argv
+# limit (MAX_ARG_STRLEN) that produced exit-126 failures when a provider's
+# verbose error output was spliced into the next round's command line.
+QUINTET_ANSWER_CAP="${QUINTET_ANSWER_CAP:-8000}"
+# Cap applied when *displaying* a failed provider's output, so a multi-hundred-line
+# error dump doesn't bury the readable answers.
+QUINTET_FAIL_RENDER_CAP="${QUINTET_FAIL_RENDER_CAP:-1500}"
+
+# Strip ANSI escapes and cap length. Used before re-injecting an answer into a
+# follow-up prompt and before rendering noisy failure output.
+_quintet_clean_answer() {
+    local text="$1" cap="${2:-$QUINTET_ANSWER_CAP}"
+    text=$(printf '%s' "$text" | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g')
+    local n=${#text}
+    if (( n > cap )); then
+        text="${text:0:cap}
+…[truncated ${n}→${cap} chars]"
+    fi
+    printf '%s' "$text"
+}
+
+# Build a clean "ANSWERS" block from a fan-out dir: only providers that succeeded
+# (status 0:ok), ANSI-stripped and length-capped, labeled by provider. Safe to
+# splice into a follow-up prompt — bounded well under the argv size limit.
+_quintet_answers_block() {
+    local rundir="$1" f provider st body
+    for f in "$rundir"/*.out; do
+        [[ -e "$f" ]] || continue
+        provider="$(basename "$f" .out)"
+        st=$(cat "${f}.status" 2>/dev/null || echo "?")
+        [[ "$st" == 0:* ]] || continue
+        body=$(_quintet_clean_answer "$(cat "$f")")
+        [[ -n "${body//[[:space:]]/}" ]] || continue
+        printf -- '--- %s ---\n%s\n\n' "${provider%%__*}" "$body"
+    done
+}
+
 # Resolve a provider list. Accepts "all", a spec, or explicit names.
 # Echoes ready providers (skips missing/unauthenticated/breaker-open), one per line.
 _quintet_resolve_providers() {
@@ -38,16 +83,21 @@ _quintet_resolve_providers() {
 # Args: provider prompt out_file
 _quintet_fleet_one() {
     local provider="$1" prompt="$2" out="$3"
-    local resp code
+    local resp code start end secs
+    start=$(now_epoch)
     resp=$(quintet_provider_oneshot "$provider" "$prompt"); code=$?
+    end=$(now_epoch); secs=$(( end - start ))
     if [[ $code -ne 0 ]]; then
         local class; class=$(record_failure "$provider" "$code" "$resp")
         printf '%s' "$resp" > "$out"
         echo "$code:$class" > "${out}.status"
+        # Live completion line so the run doesn't go dark while it works.
+        log WARN "✗ $(quintet_provider_emoji "$provider") $provider failed [${code}:${class}] after ${secs}s"
     else
         record_success "$provider"
         printf '%s' "$resp" > "$out"
         echo "0:ok" > "${out}.status"
+        log INFO "✓ $(quintet_provider_emoji "$provider") $provider answered in ${secs}s"
     fi
 }
 
@@ -55,6 +105,14 @@ _quintet_fleet_one() {
 # Args: prompt provider-list-string
 _quintet_fan_out() {
     local prompt="$1" provider_arg="$2"
+    # Every fleet dispatch is advisory/read-only — frame it so providers answer
+    # instead of exploring the repo (the timeout culprit). One choke point covers
+    # consult, debate, and review.
+    if [[ -n "$QUINTET_ADVISORY_PREAMBLE" ]]; then
+        prompt="${QUINTET_ADVISORY_PREAMBLE}
+
+${prompt}"
+    fi
     local -a providers=()
     mapfile -t providers < <(_quintet_resolve_providers "$provider_arg")
     [[ "${#providers[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
@@ -82,7 +140,7 @@ _quintet_fan_out() {
 }
 
 _quintet_render_dir() {
-    local rundir="$1" f provider st
+    local rundir="$1" f provider st body
     for f in "$rundir"/*.out; do
         [[ -e "$f" ]] || continue
         provider="$(basename "$f" .out)"
@@ -90,7 +148,14 @@ _quintet_render_dir() {
         echo "════════════════════════════════════════════════════════════"
         echo "$(quintet_provider_emoji "${provider%%__*}") ${provider}   [${st}]"
         echo "════════════════════════════════════════════════════════════"
-        cat "$f"; echo
+        if [[ "$st" == 0:* ]]; then
+            cat "$f"
+        else
+            # Failed providers often dump hundreds of lines of CLI noise — trim it
+            # so it doesn't bury the real answers.
+            _quintet_clean_answer "$(cat "$f")" "$QUINTET_FAIL_RENDER_CAP"
+        fi
+        echo
     done
 }
 
@@ -113,30 +178,71 @@ ${target}"
 }
 
 # Two-round debate: independent answers, then cross-critique + refined position.
+# Both rounds are streamed (per-provider completion logs) and the full transcript
+# is persisted under $QUINTET_HOME/debates/<ts>/ so the raw arguments survive — not
+# just whatever the orchestrator chooses to summarize.
 quintet_fleet_debate() {
     local question="$1" providers="${2:-all}"
     [[ -n "$question" ]] || die "fleet debate: missing question"
+
+    local ts archive; ts="$(now_epoch)"
+    archive="${QUINTET_HOME}/debates/${ts}"
+    ensure_dir "$archive"
 
     log INFO "── debate round 1: independent positions ──"
     local r1; r1="$(_quintet_fan_out "$question" "$providers")"
     local round1_text; round1_text="$(_quintet_render_dir "$r1")"
     echo "$round1_text"
+    printf '%s\n' "$round1_text" > "${archive}/round1.md"
+
+    # Round 2 sees ONLY the clean, length-capped successful answers — never the
+    # box-art, status tags, or multi-hundred-line failure dumps. That assembled
+    # block is what previously blew past the 128KB argv limit (exit 126).
+    local answers; answers="$(_quintet_answers_block "$r1")"
+    if [[ -z "${answers//[[:space:]]/}" ]]; then
+        log WARN "no provider produced a usable round-1 answer — skipping round 2"
+        rm -rf "$r1" 2>/dev/null || true
+        echo
+        echo "📁 Debate transcript: ${archive}/round1.md"
+        return 0
+    fi
 
     log INFO "── debate round 2: cross-critique ──"
     local critique_prompt
-    critique_prompt="Below are answers from multiple AI assistants to the question:
+    critique_prompt="Below are independent answers from several AI assistants to a question.
 
 QUESTION: ${question}
 
 ANSWERS:
-${round1_text}
+${answers}
 
-Critique the other answers, point out where they are wrong or incomplete, and give your refined final position. Be concise and concrete."
+Critique the other answers — name specifically where they are wrong or incomplete — then give your refined final position. Be concise and concrete. Do not restate the question."
     local r2; r2="$(_quintet_fan_out "$critique_prompt" "$providers")"
-    _quintet_render_dir "$r2"
+    local round2_text; round2_text="$(_quintet_render_dir "$r2")"
+    echo "$round2_text"
+    printf '%s\n' "$round2_text" > "${archive}/round2.md"
+
+    # Persist a combined transcript the user / orchestrator can reopen verbatim.
+    {
+        echo "# Quintet debate"
+        echo
+        echo "**Question:** ${question}"
+        echo "**When:** $(now_iso)"
+        echo
+        echo "## Round 1 — independent positions"
+        echo
+        cat "${archive}/round1.md"
+        echo
+        echo "## Round 2 — cross-critique"
+        echo
+        cat "${archive}/round2.md"
+    } > "${archive}/transcript.md"
+
     rm -rf "$r1" "$r2" 2>/dev/null || true
 
     echo
-    echo "ℹ️  Synthesis is intentionally left to the orchestrating Claude: weigh the"
-    echo "    round-2 positions above and state the consensus + remaining disagreements."
+    echo "📁 Full debate transcript: ${archive}/transcript.md"
+    echo "ℹ️  Synthesis is left to the orchestrating Claude: weigh the round-2 positions"
+    echo "    above, state the consensus + remaining disagreements, and show each model's"
+    echo "    key argument so the user can see the debate — not just the conclusion."
 }

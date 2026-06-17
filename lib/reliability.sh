@@ -10,6 +10,7 @@ _Q_PSTATE="${QUINTET_HOME}/provider-state"
 
 QUINTET_CB_FAILURE_THRESHOLD="${QUINTET_CB_FAILURE_THRESHOLD:-3}"  # transient fails before opening
 QUINTET_CB_COOLDOWN_SECS="${QUINTET_CB_COOLDOWN_SECS:-300}"        # 5 min cooldown
+QUINTET_CB_FAILURE_WINDOW_SECS="${QUINTET_CB_FAILURE_WINDOW_SECS:-900}"  # only count fails this recent (15 min)
 
 # classify_error <exit_code> <error_text> -> "transient" | "permanent"
 classify_error() {
@@ -34,10 +35,16 @@ record_failure() {
     echo "${ts}:${class}:${code}" >> "$f"
     tail -20 "$f" > "${f}.tmp" 2>/dev/null && mv "${f}.tmp" "$f"
     if [[ "$class" == "transient" ]]; then
-        local recent; recent=$(grep -c ":transient:" "$f" 2>/dev/null || echo 0)
+        # Only count transient failures inside the recent window. Without this,
+        # stale failures (minutes-to-days old) accumulate in the file and pre-trip
+        # the breaker on an otherwise-healthy run — the exact bug where codex /
+        # copilot opened "3 transient failures" before round 1 even dispatched.
+        local cutoff=$(( ts - QUINTET_CB_FAILURE_WINDOW_SECS ))
+        local recent
+        recent=$(awk -F: -v c="$cutoff" '$1 >= c && $2 == "transient" { n++ } END { print n+0 }' "$f" 2>/dev/null || echo 0)
         if [[ "$recent" -ge "$QUINTET_CB_FAILURE_THRESHOLD" ]]; then
             echo "$ts" > "${_Q_PSTATE}/${provider}.cooldown"
-            log WARN "circuit breaker OPEN for $provider ($recent transient failures, cooling down ${QUINTET_CB_COOLDOWN_SECS}s)"
+            log WARN "circuit breaker OPEN for $provider ($recent transient failures in ${QUINTET_CB_FAILURE_WINDOW_SECS}s, cooling down ${QUINTET_CB_COOLDOWN_SECS}s)"
         fi
     fi
     echo "$class"
