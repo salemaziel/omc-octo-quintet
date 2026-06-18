@@ -60,16 +60,19 @@ Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-gemini`); use t
 {
   "name": "export-feat",
   "cwd": "/path/to/repo",
+  "session": "quintet-export-feat",
+  "started": "2026-05-25T04:30:00Z",
   "goal": "build the export feature",
-  "created": "2026-05-25T04:30:00Z",
   "workers": [
-    { "id": "w1-codex",  "provider": "codex",  "task": "implement CSV serializer in src/export/", "window": 0 },
-    { "id": "w2-codex",  "provider": "codex",  "task": "add unit tests in tests/export/",         "window": 1 },
-    { "id": "w3-gemini", "provider": "gemini", "task": "write docs in docs/export.md",            "window": 2 },
-    { "id": "w4-qwen",   "provider": "qwen",   "task": "audit edge cases and report to taskboard","window": 3 }
+    { "name": "w1-codex",  "provider": "codex" },
+    { "name": "w2-codex",  "provider": "codex" },
+    { "name": "w3-gemini", "provider": "gemini" },
+    { "name": "w4-qwen",   "provider": "qwen" }
   ]
 }
 ```
+
+Each worker object is `{"name","provider"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to.
 
 If a session is orphaned (you lost the terminal), `team list` plus this file is enough to re-attach, capture, or shut it down cleanly.
 
@@ -110,7 +113,7 @@ The discipline that makes this work: **scope by files, verify by artifacts.** Ev
 
 - **File ownership**: never give two workers overlapping files. This is the #1 cause of corruption. Scope subtasks by directory/module.
 - **Verify launch**: after starting, run `team capture` to confirm each agent REPL came up and accepted the task. Cold-start warmup is provider-specific (tune via `QUINTET_<PROVIDER>_WARMUP` seconds).
-- **Autonomy flags**: defaults launch agents in **fully unattended** modes (`claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini/qwen --approval-mode yolo`). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
+- **Autonomy flags**: defaults launch agents in **fully unattended** modes so they can write to the worktree without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini --approval-mode yolo --skip-trust`, and `qwen --approval-mode yolo` with `GEMINI_CLI_TRUST_WORKSPACE`/`QWEN_CLI_TRUST_WORKSPACE=true` (qwen lacks `--skip-trust`, so the trust env is what actually unblocks its file writes). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
 - **Verify artifacts, not the taskboard**: the taskboard is self-reported; the files and tests are the proof.
 - **No providers ready**: if `doctor` reports an empty pool, the launch fails — authenticate at least one CLI first (see `skills/quintet-orchestration`).
 
@@ -150,7 +153,9 @@ The bottleneck is almost never compute — it's *decomposition quality*. Three w
 
 ## Sandboxing and autonomy
 
-Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini`/`qwen --approval-mode yolo`. This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
+Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini --approval-mode yolo --skip-trust`, and `qwen --approval-mode yolo` (prefixed with `GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true`, since the qwen fork has no `--skip-trust` flag and would otherwise refuse to write in an untrusted directory). This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
+
+The one-shot fleet/debate path is deliberately the opposite: it runs each provider headless and read-only behind the advisory preamble (no file writes expected), so sandbox-default invocations there are fine — the unattended write-access flags above apply only to team workers that are actually doing work.
 
 Tighten it per provider with `QUINTET_<P>_LAUNCH`, which overrides the entire launch command for that provider's workers:
 
