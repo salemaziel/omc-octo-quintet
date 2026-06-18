@@ -15,7 +15,9 @@
 # exploration / tool use — that exploration was the main cause of exit-124
 # timeouts (a cold CLI would spend the whole budget reading the repo instead of
 # answering). Override or disable via QUINTET_ADVISORY_PREAMBLE.
-QUINTET_ADVISORY_PREAMBLE="${QUINTET_ADVISORY_PREAMBLE:-IMPORTANT: This is a one-shot advisory question, not a coding session. Do NOT read, list, or explore files. Do NOT run shell commands or invoke tools. Answer directly, from reasoning, as concise plain text.}"
+# Note: `-` (not `:-`) so an explicitly empty QUINTET_ADVISORY_PREAMBLE= disables
+# the preamble (the documented opt-out); only an *unset* var gets the default.
+QUINTET_ADVISORY_PREAMBLE="${QUINTET_ADVISORY_PREAMBLE-IMPORTANT: This is a one-shot advisory question, not a coding session. Do NOT read, list, or explore files. Do NOT run shell commands or invoke tools. Answer directly, from reasoning, as concise plain text.}"
 
 # Max characters of any single answer we fold back into a follow-up prompt
 # (debate round 2). Keeps the assembled prompt well under the 128KB single-argv
@@ -201,9 +203,13 @@ quintet_fleet_debate() {
     local question="$1" providers="${2:-all}"
     [[ -n "$question" ]] || die "fleet debate: missing question"
 
-    local ts archive; ts="$(now_epoch)"
-    archive="${QUINTET_HOME:-$HOME/.quintet}/debates/${ts}"
-    ensure_dir "$archive"
+    # Seconds-resolution ts alone can collide if two debates start in the same
+    # second under the same QUINTET_HOME — mktemp -d guarantees a unique dir so
+    # transcripts never clobber each other.
+    local ts base archive; ts="$(now_epoch)"
+    base="${QUINTET_HOME:-$HOME/.quintet}/debates"
+    ensure_dir "$base"
+    archive="$(mktemp -d "${base}/${ts}.XXXXXX")" || die "fleet debate: cannot create transcript dir under ${base}"
 
     log INFO "── debate round 1: independent positions ──"
     local r1; r1="$(_quintet_fan_out "$question" "$providers")"

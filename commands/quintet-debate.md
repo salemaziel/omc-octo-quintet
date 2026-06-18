@@ -10,7 +10,7 @@ Run a quintet debate on: **$ARGUMENTS**
 ${CLAUDE_PLUGIN_ROOT}/bin/quintet debate "<question>" [providers]
 ```
 
-This runs round 1 (independent positions) then round 2 (each model critiques the others and refines). Per-provider completion is streamed live, and the full transcript is saved to `${QUINTET_HOME:-~/.quintet}/debates/<ts>/transcript.md` (the command prints the path).
+This runs round 1 (independent positions) then round 2 (each model critiques the others and refines). Per-provider completion is streamed live, and the full transcript is saved to `${QUINTET_HOME:-$HOME/.quintet}/debates/<ts>/transcript.md` (the command prints the path).
 
 After it returns:
 1. **Show the debate, not just the result.** Give the user each model's key argument in a line or two (round-1 stance → how round 2 shifted it), and link the printed transcript path so they can read the raw arguments.
