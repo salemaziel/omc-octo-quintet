@@ -36,9 +36,20 @@ Launches persistent tmux worker panes to execute parallel file-editing tasks acr
    - *Validation*: Run build/test verification commands (e.g., `npm test`, `cargo test`, `pytest`) to confirm edits compile and pass tests cleanly.
    - *Feedback Loop*: If a worker fails or emits errors, inspect worker log pane (`tmux attach -t quintet-export`), resolve failure, or re-assign subtask.
 
-5. **Shutdown & Handoff**:
+5. **Shutdown & Structured Handoff**:
    - Gracefully shut down worker session:
      ```bash
      !{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" stop export}
      ```
-   - Deliver handoff summary detailing modified files, commit hashes, and verification test results.
+   - Format deliverable summary:
+     ```text
+     ## Team Execution Summary
+     - **Team Name**: export
+     - **Workers**: 2:codex, 1:gemini
+     - **Files Modified**: src/export/serializer.rs, tests/export/test_serializer.rs
+     - **Verification**: All 12 unit tests passing (0 failures)
+     ```
+
+## Reference Materials
+
+- Complete CLI subcommands, flags, and provider pool options: [references/CLI_REFERENCE.md](../../references/CLI_REFERENCE.md)

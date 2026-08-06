@@ -19,9 +19,20 @@ Audits installed CLI binaries and authentication states across all Quintet provi
 !{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" doctor}
 ```
 
-2. **Pool Diagnostics & Action Rules**:
-   - List all ready providers (`ready: true`, `auth: ok`).
-   - For any provider displaying `auth=none` or unauthenticated state, report the one-time interactive login command (e.g. `qwen`, `codex login`, `claude login`).
-   - If zero providers are ready, stop execution and guide the user through authenticating at least one CLI provider before running fleet or team commands.
+2. **Binary Resolution Guard**:
+   - If the binary is missing or not executable, instruct the user to verify Quintet extension installation or check path `$HOME/.gemini/extensions/quintet/bin/quintet`.
 
-3. **Output Reporting**: Summarize active provider pool capacity (e.g. `4/5 providers ready`) and exclude unready models from subsequent orchestration tasks.
+3. **Pool Diagnostics & Explicit Remediation Fixes**:
+   - List all ready providers (`ready: true`, `auth: ok`).
+   - For unauthenticated providers (`auth=none`), report the specific one-time fix command:
+     - **Claude Code**: `claude login`
+     - **Codex CLI**: `codex login`
+     - **Gemini CLI**: `gemini login` or `gcloud auth application-default login`
+     - **GitHub Copilot**: `gh auth login` or `copilot auth`
+     - **Qwen Code**: `qwen` (run interactively once to complete OAuth)
+
+4. **Output Reporting**: Summarize active provider pool capacity (e.g. `4/5 providers ready`) and exclude unready models from subsequent orchestration tasks.
+
+## Reference Materials
+
+- Complete CLI subcommands, options, and setup: [references/CLI_REFERENCE.md](../../references/CLI_REFERENCE.md)

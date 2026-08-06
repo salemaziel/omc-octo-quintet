@@ -17,15 +17,23 @@ Fans out a question across ready AI provider CLIs in parallel and synthesizes a 
 2. **Execute Consult**: Fan out the question across ready providers:
 
 ```bash
-!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" consult {{args}}}
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" consult "Best approach to dedupe a 10M-row stream in Rust?" claude,codex,gemini}
 ```
 
-3. **Fallback & Error Handling**:
-   - If a provider times out or returns an error, note the provider failure in the synthesis log and proceed with the available responses.
-   - If zero providers return valid responses, inform the user and request CLI authentication check.
+3. **Output Validation & Fallback**:
+   - *Validation*: Verify responses were collected from ready models.
+   - *Fallback*: If a provider times out or errors, log the failure and synthesize from available responses.
+   - *Empty Pool Guard*: If zero providers respond, prompt user to check CLI auth.
 
-4. **Synthesis & Handoff**:
-   - State the **Consensus** (where models agree).
-   - Highlight **Disagreements** (noting which model held which position).
-   - Deliver **One Recommendation** with clear technical reasoning.
-   - *Constraint*: Do not output raw pasted response blocks; the synthesized verdict is the primary deliverable.
+4. **Structured Synthesis & Deliverable Format**:
+   Format the deliverable strictly using the following structure:
+
+```text
+Consensus (3/3): High-confidence agreement across models.
+Disagreements: Surface points where models differ and note which model held which view.
+Recommendation: One clear recommendation with technical reasoning.
+```
+
+## Reference Materials
+
+- Complete CLI subcommands, options, and setup: [references/CLI_REFERENCE.md](../../references/CLI_REFERENCE.md)

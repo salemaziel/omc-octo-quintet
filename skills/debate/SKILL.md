@@ -17,15 +17,22 @@ Executes a two-round cross-critique debate across ready AI provider CLIs to surf
 2. **Execute Debate**: Trigger the two-round cross-model debate:
 
 ```bash
-!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate {{args}}}
+!{QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate "Should we use gRPC or REST for this internal service?" claude,codex,gemini}
 ```
 
-3. **Fallback & Error Handling**:
-   - If a provider fails during Round 1 or Round 2, route around it using fallback responses from remaining ready models.
-   - If only one model completes both rounds, fall back to single-model reasoning and inform the user.
+3. **Output Validation & Fallback**:
+   - *Validation*: Confirm Round-2 refined positions were generated.
+   - *Fallback*: If a provider fails during Round 1 or Round 2, route around it using fallback responses from remaining ready models.
 
-4. **Synthesis & Handoff**:
-   - Base synthesis on **Round-2 refined positions**.
-   - Detail where models **converged** after cross-critique.
-   - Highlight points that **remained contested** and explain why.
-   - Deliver **One Final Recommendation** with actionable trade-off analysis.
+4. **Structured Synthesis & Deliverable Format**:
+   Format the deliverable strictly using the following structure:
+
+```text
+Round-2 Consensus: Where models converged after cross-critique.
+Contested Points: Key trade-offs that stayed disputed and why.
+Recommendation: One actionable decision with trade-off analysis.
+```
+
+## Reference Materials
+
+- Complete CLI subcommands, options, and setup: [references/CLI_REFERENCE.md](../../references/CLI_REFERENCE.md)
