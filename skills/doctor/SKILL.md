@@ -31,7 +31,10 @@ Audits installed CLI binaries and authentication states across all Quintet provi
      - **GitHub Copilot**: `gh auth login` or `copilot auth`
      - **Qwen Code**: `qwen` (run interactively once to complete OAuth)
 
-4. **Output Reporting**: Summarize active provider pool capacity (e.g. `4/5 providers ready`) and exclude unready models from subsequent orchestration tasks.
+4. **Re-verification Feedback Loop**:
+   - Re-run `"$QBIN" doctor` after authenticating any unready CLI provider to verify the state updated to `ready: true`.
+
+5. **Output Reporting**: Summarize active provider pool capacity (e.g. `4/5 providers ready`) and exclude unready models from subsequent orchestration tasks.
 
 ## Reference Materials
 
