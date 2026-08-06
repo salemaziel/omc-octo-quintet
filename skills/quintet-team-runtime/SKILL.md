@@ -1,6 +1,10 @@
 ---
 name: quintet-team-runtime
 description: Operate persistent quintet worker teams — spawn coding-agent CLIs (claude/codex/gemini/copilot/qwen) as long-lived tmux workers, distribute scoped subtasks, monitor, and shut down. Use proactively when running a multi-agent CLI team in tmux, when distributing work across AI workers, for building or refactoring in parallel, or when recovering a stuck or orphaned quintet team. Trigger on "quintet team", "tmux worker team", "parallel AI workers", "spawn agent workers", "run codex and gemini in parallel to build", "distribute subtasks across models". Not for one-shot multi-model questions — use quintet-fleet-dispatch.
+metadata:
+  version: 0.1.0
+  category: multi-agent-orchestration
+  tags: quintet, team, tmux, parallel-workers, file-editing
 ---
 
 # Quintet Team Runtime

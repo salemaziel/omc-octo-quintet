@@ -1,6 +1,10 @@
 ---
 name: quintet-fleet-dispatch
 description: Run one-shot multi-AI fleet dispatch with quintet — fan a single prompt to several coding-agent CLIs (claude/codex/gemini/copilot/qwen) in parallel, run a two-round cross-model debate, or get a multi-model code review, with circuit-breaker and fallback reliability. Use proactively when fanning a prompt out to several models, when running an AI debate, when seeking consensus, or for reviewing a diff across models. Trigger on "quintet fleet", "AI debate", "run a debate between models", "consult the models", "get consensus from the models", "multi-model review", "what do all the models think". Not for parallel file-editing work — use quintet-team-runtime.
+metadata:
+  version: 0.1.0
+  category: multi-agent-orchestration
+  tags: quintet, fleet, dispatch, multi-model, circuit-breaker
 ---
 
 # Quintet Fleet Dispatch
