@@ -14,7 +14,7 @@
       "name": "quintet",
       "source": "./",
       "displayName": "Quintet",
-      "description": "One orchestrator for five coding-agent CLIs (Claude Code, Codex, Gemini, Copilot, Qwen): persistent tmux worker teams plus one-shot multi-AI fleet dispatch / debate / review.",
+      "description": "One orchestrator for five coding-agent CLIs (Claude Code, Codex, Google Antigravity / agy, Copilot, Qwen): persistent tmux worker teams plus one-shot multi-AI fleet dispatch / debate / review.",
       "version": "0.1.0",
       "author": {
         "name": "salemaziel"
@@ -29,7 +29,12 @@
         "tmux",
         "fleet",
         "debate",
-        "code-review"
+        "code-review",
+        "agy",
+        "gemini",
+        "codex",
+        "claude",
+        "copilot"
       ]
     }
   ]
