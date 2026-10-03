@@ -1,6 +1,6 @@
 ---
 name: quintet-fleet-dispatch
-description: Run one-shot multi-AI fleet dispatch with quintet — fan a single prompt to several coding-agent CLIs (claude/codex/gemini/copilot/qwen) in parallel, run a two-round cross-model debate, or get a multi-model code review, with circuit-breaker and fallback reliability. Use proactively when fanning a prompt out to several models, when running an AI debate, when seeking consensus, or for reviewing a diff across models. Trigger on "quintet fleet", "AI debate", "run a debate between models", "consult the models", "get consensus from the models", "multi-model review", "what do all the models think". Not for parallel file-editing work — use quintet-team-runtime.
+description: Run one-shot multi-AI fleet dispatch with quintet — fan a single prompt to several coding-agent CLIs (claude/codex/agy/copilot/qwen/opencode) in parallel, run a two-round cross-model debate, or get a multi-model code review, with circuit-breaker and fallback reliability. Use proactively when fanning a prompt out to several models, when running an AI debate, when seeking consensus, or for reviewing a diff across models. Trigger on "quintet fleet", "AI debate", "run a debate between models", "consult the models", "get consensus from the models", "multi-model review", "what do all the models think". Not for parallel file-editing work — use quintet-team-runtime.
 ---
 
 # Quintet Fleet Dispatch
@@ -58,7 +58,7 @@ Fleet **collects**; it does not decide. After the command returns, you must:
 
 1. Summarize where the models **agree** (high-confidence signal).
 2. Surface where they **disagree** and why — disagreement marks the risky/uncertain parts.
-3. Give the user **one recommendation** with reasoning, not five pasted blocks.
+3. Give the user **one recommendation** with reasoning, not raw pasted blocks.
 
 For `debate`, base the synthesis on the **round-2** refined positions, and explicitly note any point that stayed contested.
 
@@ -167,7 +167,7 @@ Fleet's value is breadth, but the *right* breadth beats the *most* breadth. Matc
 | Broad "did we miss anything?" | agy, qwen, copilot | cheap breadth catches blind spots |
 | Contested decision (use `debate`) | claude, codex, agy | strong models that will actually push back |
 
-Omit the provider list to use everyone ready; narrow it when a question doesn't need five voices.
+Omit the provider list to use everyone ready; narrow it when a question doesn't need all voices.
 
 ## Reliability tuning recipes
 

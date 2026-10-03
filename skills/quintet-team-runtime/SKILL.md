@@ -1,6 +1,6 @@
 ---
 name: quintet-team-runtime
-description: Operate persistent quintet worker teams — spawn coding-agent CLIs (claude/codex/agy/copilot/qwen) as long-lived tmux workers, distribute scoped subtasks, monitor, and shut down. Use proactively when running a multi-agent CLI team in tmux, when distributing work across AI workers, for building or refactoring in parallel, or when recovering a stuck or orphaned quintet team. Trigger on "quintet team", "tmux worker team", "parallel AI workers", "spawn agent workers", "run codex and agy in parallel to build", "distribute subtasks across models". Not for one-shot multi-model questions — use quintet-fleet-dispatch.
+description: Operate persistent quintet worker teams — spawn coding-agent CLIs (claude/codex/agy/copilot/qwen/opencode) as long-lived tmux workers, distribute scoped subtasks, monitor, and shut down. Use proactively when running a multi-agent CLI team in tmux, when distributing work across AI workers, for building or refactoring in parallel, or when recovering a stuck or orphaned quintet team. Trigger on "quintet team", "tmux worker team", "parallel AI workers", "spawn agent workers", "run codex and agy in parallel to build", "distribute subtasks across models". Not for one-shot multi-model questions — use quintet-fleet-dispatch.
 ---
 
 # Quintet Team Runtime
@@ -113,7 +113,7 @@ The discipline that makes this work: **scope by files, verify by artifacts.** Ev
 
 - **File ownership**: never give two workers overlapping files. This is the #1 cause of corruption. Scope subtasks by directory/module.
 - **Verify launch**: after starting, run `team capture` to confirm each agent REPL came up and accepted the task. Cold-start warmup is provider-specific (tune via `QUINTET_<PROVIDER>_WARMUP` seconds).
-- **Autonomy flags**: defaults launch agents in **fully unattended** modes so they can write to the worktree without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, and `qwen --approval-mode yolo` with `GEMINI_CLI_TRUST_WORKSPACE`/`QWEN_CLI_TRUST_WORKSPACE=true` (qwen lacks `--skip-trust`, so the trust env is what actually unblocks its file writes). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
+- **Autonomy flags**: defaults launch agents in **fully unattended** modes so they can write to the worktree without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, `qwen --approval-mode yolo` with `GEMINI_CLI_TRUST_WORKSPACE`/`QWEN_CLI_TRUST_WORKSPACE=true` (qwen lacks `--skip-trust`, so the trust env is what actually unblocks its file writes), and `opencode --auto`. Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
 - **Verify artifacts, not the taskboard**: the taskboard is self-reported; the files and tests are the proof.
 - **No providers ready**: if `doctor` reports an empty pool, the launch fails — authenticate at least one CLI first (see `skills/quintet-orchestration`).
 
@@ -153,7 +153,7 @@ The bottleneck is almost never compute — it's *decomposition quality*. Three w
 
 ## Sandboxing and autonomy
 
-Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, and `qwen --approval-mode yolo` (prefixed with `GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true`, since the qwen fork has no `--skip-trust` flag and would otherwise refuse to write in an untrusted directory). This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
+Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, `qwen --approval-mode yolo` (prefixed with `GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true`, since the qwen fork has no `--skip-trust` flag and would otherwise refuse to write in an untrusted directory), and `opencode --auto`. This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
 
 The one-shot fleet/debate path is deliberately the opposite: it runs each provider headless and read-only behind the advisory preamble (no file writes expected), so sandbox-default invocations there are fine — the unattended write-access flags above apply only to team workers that are actually doing work.
 
@@ -190,7 +190,7 @@ Tune team behavior without editing the CLI:
 | `QUINTET_<P>_WARMUP` | seconds to wait before injecting the task into a cold REPL | 5–6 |
 | `QUINTET_<P>_LAUNCH` | the interactive launch command for that provider's workers | per provider |
 
-`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`). Raise warmup when a worker's window shows a shell prompt instead of the agent at launch.
+`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`, `OPENCODE`). Raise warmup when a worker's window shows a shell prompt instead of the agent at launch.
 
 ## Related skills
 

@@ -56,7 +56,7 @@ quintet_provider_install_hint() {
         agy|gemini)  echo "Google Antigravity CLI (agy)" ;;
         copilot)     echo "npm install -g @github/copilot  (or: brew install copilot-cli)" ;;
         qwen)        echo "npm install -g @qwen-code/qwen-code" ;;
-        opencode)    echo "npm install -g opencode-ai (or see https://opencode.ai)" ;;
+        opencode)    echo "npm install -g @opencode/cli  (or: curl -fsSL https://opencode.ai/install | bash)" ;;
         *)           echo "(unknown provider)" ;;
     esac
 }
@@ -96,8 +96,9 @@ quintet_provider_auth() {
             elif [[ -n "${QWEN_API_KEY:-}" ]]; then echo "api-key";
             else echo "none"; fi ;;
         opencode)
-            if [[ -f "${HOME}/.local/share/opencode/auth.json" ]]; then echo "oauth";
-            elif command -v opencode >/dev/null 2>&1 && opencode auth list >/dev/null 2>&1; then echo "multi";
+            local auth_file="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
+            if [[ -s "$auth_file" ]]; then echo "oauth";
+            elif [[ -n "${OPENCODE_API_KEY:-}${OPENROUTER_API_KEY:-}" ]]; then echo "api-key";
             else echo "none"; fi ;;
         *) echo "unknown" ;;
     esac
@@ -153,7 +154,7 @@ quintet_provider_oneshot() {
             cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
                  timeout "$timeout_secs" qwen -p "$prompt" --approval-mode yolo -o text) ;;
         opencode)
-            cmd=(timeout "$timeout_secs" opencode run "$prompt" --pure --auto) ;;
+            cmd=(timeout "$timeout_secs" opencode run --pure --auto "$prompt") ;;
         *)
             log ERROR "unknown provider for one-shot: $provider"; return 2 ;;
     esac

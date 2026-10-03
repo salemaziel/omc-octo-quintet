@@ -1,5 +1,5 @@
 ---
-description: Launch a persistent multi-agent CLI worker team in tmux across claude/codex/agy/copilot/qwen.
+description: Launch a persistent multi-agent CLI worker team in tmux across claude/codex/agy/copilot/qwen/opencode.
 argument-hint: <spec> "<task>"   e.g. 2:codex,1:agy "build the export feature"
 allowed-tools: Bash, Read, Glob, Grep
 ---

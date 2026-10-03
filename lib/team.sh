@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # quintet/lib/team.sh — persistent tmux worker-team runtime (omc-teams style),
-# extended to all five providers (claude, codex, gemini, copilot, qwen).
+# extended to all six providers (claude, codex, agy, copilot, qwen, opencode).
 #
 # A "team" is a detached tmux session of long-lived worker windows. Each worker
 # is an interactive agent CLI that receives a task via send-keys and then works

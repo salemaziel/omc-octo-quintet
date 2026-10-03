@@ -35,7 +35,7 @@ Workers share one working directory and can clobber each other. Decompose the ta
 
 ## Fleet mode discipline
 
-Fleet **collects** answers; it does not pick a winner. After the command returns, synthesize: state the consensus, surface disagreements (and which model held which view), and give one recommendation with reasoning. For `debate`, weigh the round-2 refined positions. Never paste five raw blocks back — the synthesized paragraph is the deliverable.
+Fleet **collects** answers; it does not pick a winner. After the command returns, synthesize: state the consensus, surface disagreements (and which model held which view), and give one recommendation with reasoning. For `debate`, weigh the round-2 refined positions. Never paste raw blocks back — the synthesized paragraph is the deliverable.
 
 ## Guardrails
 

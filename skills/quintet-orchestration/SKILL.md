@@ -21,7 +21,7 @@ The three execution modes it routes to:
 
 **Use when** the user names two or more of the quintet CLIs, says "quintet", or asks to run, compare, debate, or review across several AI models at once.
 
-**Don't use when** the work is a single-model edit (call that CLI directly), or when "multi-agent" refers to an unrelated framework rather than these five CLIs. That distinction is the key decision this skill makes before doing anything else.
+**Don't use when** the work is a single-model edit (call that CLI directly), or when "multi-agent" refers to an unrelated framework rather than these CLIs. That distinction is the key decision this skill makes before doing anything else.
 
 ## First step, every time
 

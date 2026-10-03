@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # quintet — unified CLI-agent orchestrator.
 #
-#   Persistent tmux worker teams across claude / codex / agy / copilot / qwen,
+#   Persistent tmux worker teams across claude / codex / agy / copilot / qwen / opencode,
 #   plus one-shot multi-AI fleet dispatch (consult / debate / review).
 #
 # Entry point. Sources the lib/, dispatches subcommands. Safe to symlink onto PATH.

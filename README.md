@@ -62,8 +62,7 @@ npm install -g @openai/codex               # codex
 # Google Antigravity CLI                   # agy
 npm install -g @github/copilot             # copilot   (or: brew install copilot-cli)
 npm install -g @qwen-code/qwen-code        # qwen      (free OAuth tier)
-npm install -g opencode-ai                 # opencode  (multi-provider router)
-```
+npm install -g @opencode/cli               # opencode  (or: curl -fsSL https://opencode.ai/install | bash)
 ```
 
 ## Usage
@@ -107,7 +106,7 @@ quintet providers    # per-provider install/auth/ready
 | `QUINTET_HOME` | reliability/circuit-breaker state | `~/.quintet` |
 | `QUINTET_CB_FAILURE_THRESHOLD` / `QUINTET_CB_COOLDOWN_SECS` | circuit breaker tuning | 3 / 300 |
 
-`<P>` ∈ `CLAUDE CODEX AGY COPILOT QWEN`.
+`<P>` ∈ `CLAUDE CODEX AGY COPILOT QWEN OPENCODE`.
 
 ## Architecture
 

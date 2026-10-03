@@ -37,6 +37,8 @@ source "${ROOT}/lib/fleet.sh"
 echo "── 2c. opencode provider & spec resolution ──"
 [[ "$(_quintet_parse_spec "1:opencode")" == "opencode" ]] && ok "spec parses opencode" || bad "spec parses opencode"
 [[ "$(quintet_provider_bin "opencode")" == "opencode" ]] && ok "bin for opencode is opencode" || bad "bin for opencode is opencode"
+[[ "$(quintet_provider_emoji "opencode")" == "🟧" ]] && ok "emoji for opencode is 🟧" || bad "emoji for opencode is 🟧"
+[[ "$(quintet_provider_launch_cmd "opencode")" == "opencode --auto" ]] && ok "launch cmd for opencode is opencode --auto" || bad "launch cmd for opencode"
 
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
