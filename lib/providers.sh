@@ -16,10 +16,11 @@
 #   agy      : agy -p "<prompt>" --dangerously-skip-permissions --output-format text
 #   copilot  : copilot -p "<prompt>" --no-ask-user -s --disable-builtin-mcps
 #   qwen     : qwen -p "<prompt>" --approval-mode yolo -o text  (Gemini-CLI fork)
+#   opencode : opencode run "<prompt>" --pure --auto
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Canonical provider list (extend here to add ollama/cursor-agent/etc.).
-QUINTET_PROVIDERS=(claude codex agy copilot qwen)
+QUINTET_PROVIDERS=(claude codex agy copilot qwen opencode)
 
 # Display emoji per provider (used in fleet reports).
 quintet_provider_emoji() {
@@ -29,6 +30,7 @@ quintet_provider_emoji() {
         agy|gemini)  echo "🟡" ;;
         copilot)     echo "🟢" ;;
         qwen)        echo "🔵" ;;
+        opencode)    echo "🟧" ;;
         *)           echo "⚪" ;;
     esac
 }
@@ -41,6 +43,7 @@ quintet_provider_bin() {
         agy|gemini)  echo "agy" ;;
         copilot)     echo "copilot" ;;
         qwen)        echo "qwen" ;;
+        opencode)    echo "opencode" ;;
         *)           echo "$1" ;;
     esac
 }
@@ -53,6 +56,7 @@ quintet_provider_install_hint() {
         agy|gemini)  echo "Google Antigravity CLI (agy)" ;;
         copilot)     echo "npm install -g @github/copilot  (or: brew install copilot-cli)" ;;
         qwen)        echo "npm install -g @qwen-code/qwen-code" ;;
+        opencode)    echo "npm install -g opencode-ai (or see https://opencode.ai)" ;;
         *)           echo "(unknown provider)" ;;
     esac
 }
@@ -91,6 +95,10 @@ quintet_provider_auth() {
             elif [[ -f "${HOME}/.qwen/config.json" ]]; then echo "config";
             elif [[ -n "${QWEN_API_KEY:-}" ]]; then echo "api-key";
             else echo "none"; fi ;;
+        opencode)
+            if [[ -f "${HOME}/.local/share/opencode/auth.json" ]]; then echo "oauth";
+            elif command -v opencode >/dev/null 2>&1 && opencode auth list >/dev/null 2>&1; then echo "multi";
+            else echo "none"; fi ;;
         *) echo "unknown" ;;
     esac
 }
@@ -121,6 +129,7 @@ quintet_provider_oneshot() {
         agy|gemini)  timeout_secs="${QUINTET_AGY_TIMEOUT:-${QUINTET_GEMINI_TIMEOUT:-$t_default}}" ;;
         copilot)     timeout_secs="${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
         qwen)        timeout_secs="${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
+        opencode)    timeout_secs="${QUINTET_OPENCODE_TIMEOUT:-$t_default}" ;;
         *)           timeout_secs="$t_default" ;;
     esac
 
@@ -143,6 +152,8 @@ quintet_provider_oneshot() {
             # Qwen is a Gemini-CLI fork without --skip-trust; it honors the trust env var.
             cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
                  timeout "$timeout_secs" qwen -p "$prompt" --approval-mode yolo -o text) ;;
+        opencode)
+            cmd=(timeout "$timeout_secs" opencode run "$prompt" --pure --auto) ;;
         *)
             log ERROR "unknown provider for one-shot: $provider"; return 2 ;;
     esac
@@ -178,6 +189,7 @@ quintet_provider_launch_cmd() {
         # approves tool calls but the workspace stays untrusted, which blocks file
         # writes. Set the trust env vars so a team worker can actually edit the worktree.
         qwen)        echo "${QUINTET_QWEN_LAUNCH:-env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo}" ;;
+        opencode)    echo "${QUINTET_OPENCODE_LAUNCH:-opencode --auto}" ;;
         *)           echo "$(quintet_provider_bin "$provider")" ;;
     esac
 }
@@ -190,6 +202,7 @@ quintet_provider_warmup() {
         agy|gemini)  echo "${QUINTET_AGY_WARMUP:-${QUINTET_GEMINI_WARMUP:-5}}" ;;
         copilot)     echo "${QUINTET_COPILOT_WARMUP:-6}" ;;
         qwen)        echo "${QUINTET_QWEN_WARMUP:-5}" ;;
+        opencode)    echo "${QUINTET_OPENCODE_WARMUP:-5}" ;;
         *)           echo 5 ;;
     esac
 }

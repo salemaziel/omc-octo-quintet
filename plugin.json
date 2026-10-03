@@ -1,7 +1,7 @@
 {
   "name": "quintet",
   "version": "0.1.0",
-  "description": "Unified CLI-agent orchestrator. Drives Claude Code, OpenAI Codex, Google Antigravity (agy), GitHub Copilot, and Qwen Code CLIs in two modes: persistent tmux worker teams and one-shot multi-AI fleet dispatch / debate / review.",
+  "description": "Unified CLI-agent orchestrator. Drives Claude Code, OpenAI Codex, Google Antigravity (agy), GitHub Copilot, Qwen Code, and OpenCode CLIs in two modes: persistent tmux worker teams and one-shot multi-AI fleet dispatch / debate / review.",
   "author": {
     "name": "salemaziel",
     "email": "claude@viadelweb.cloud"
@@ -16,6 +16,7 @@
     "agy",
     "gemini",
     "qwen",
+    "opencode",
     "fleet",
     "debate",
     "code-review"

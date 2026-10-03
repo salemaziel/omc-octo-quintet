@@ -1,6 +1,6 @@
 # Quintet (Antigravity CLI / Gemini plugin)
 
-Quintet drives five coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen` — through one entry point, the `quintet` binary. It bundles two execution models:
+Quintet drives six coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen`, `opencode` — through one entry point, the `quintet` binary. It bundles two execution models:
 
 - **Team mode** (persistent): long-lived worker processes in tmux that autonomously edit files in parallel. Use for *doing work*.
 - **Fleet mode** (one-shot): a single prompt fanned out to several CLIs headless, with a circuit-breaker + fallback reliability layer. Use for *getting perspectives* (`consult` / `debate` / `review`).
@@ -31,7 +31,7 @@ When ambiguous ("improve this module with the models"), ask whether they want th
 
 ## Team mode discipline
 
-Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Agy → breadth/docs, Copilot → extra perspective, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real files and tests**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
+Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Agy → breadth/docs, Copilot/OpenCode → extra perspectives, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real files and tests**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
 
 ## Fleet mode discipline
 

@@ -21,6 +21,7 @@ echo "── 2. cli surface ──"
 "$BIN" help     >/dev/null 2>&1 && ok "help"    || bad "help"
 "$BIN" providers >/dev/null 2>&1 && ok "providers" || bad "providers"
 "$BIN" providers | grep "agy" >/dev/null && ok "providers lists agy" || bad "providers lists agy"
+"$BIN" providers | grep "opencode" >/dev/null && ok "providers lists opencode" || bad "providers lists opencode"
 "$BIN" doctor   >/dev/null 2>&1; [[ $? -le 1 ]] && ok "doctor runs" || bad "doctor runs"
 
 echo "── 2b. agy provider & alias resolution ──"
@@ -32,6 +33,10 @@ source "${ROOT}/lib/fleet.sh"
 [[ "$(_quintet_parse_spec "1:agy")" == "agy" ]] && ok "spec parses agy" || bad "spec parses agy"
 [[ "$(quintet_provider_bin "agy")" == "agy" ]] && ok "bin for agy is agy" || bad "bin for agy is agy"
 [[ "$(quintet_provider_bin "gemini")" == "agy" ]] && ok "bin for gemini alias is agy" || bad "bin for gemini alias is agy"
+
+echo "── 2c. opencode provider & spec resolution ──"
+[[ "$(_quintet_parse_spec "1:opencode")" == "opencode" ]] && ok "spec parses opencode" || bad "spec parses opencode"
+[[ "$(quintet_provider_bin "opencode")" == "opencode" ]] && ok "bin for opencode is opencode" || bad "bin for opencode is opencode"
 
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then

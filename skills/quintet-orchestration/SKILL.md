@@ -1,11 +1,11 @@
 ---
 name: quintet-orchestration
-description: Orchestrate multiple coding-agent CLIs (Claude Code, OpenAI Codex, Antigravity / agy, GitHub Copilot, Qwen Code) as one fleet through the quintet entry point. Use proactively when running several of these AI CLIs at once, when spinning up a multi-agent CLI worker team in tmux, for fanning a single prompt out to many models, or when debating or reviewing across models. Trigger on "quintet", "run codex and agy and copilot", "orchestrate CLI agents", "ask all the models", "AI debate", "multi-model review". Not for single-model edits or generic multi-agent frameworks unrelated to the quintet CLIs.
+description: Orchestrate multiple coding-agent CLIs (Claude Code, OpenAI Codex, Antigravity / agy, GitHub Copilot, Qwen Code, OpenCode) as one fleet through the quintet entry point. Use proactively when running several of these AI CLIs at once, when spinning up a multi-agent CLI worker team in tmux, for fanning a single prompt out to many models, or when debating or reviewing across models. Trigger on "quintet", "run codex and agy and copilot", "orchestrate CLI agents", "ask all the models", "AI debate", "multi-model review". Not for single-model edits or generic multi-agent frameworks unrelated to the quintet CLIs.
 ---
 
 # Quintet Orchestration
 
-Quintet drives five coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen` — through one entry point: `${CLAUDE_PLUGIN_ROOT}/bin/quintet`.
+Quintet drives six coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen`, `opencode` — through one entry point: `${CLAUDE_PLUGIN_ROOT}/bin/quintet`.
 
 **This skill is the router.** It does exactly four things: check readiness, classify the request (edits vs opinions), pick the mode, and hand off to the skill that owns the procedure. It does **not** run the launch/monitor/verify loop, the debate rounds, or the synthesis — those belong to the procedure skills. Keeping that boundary clean is the entire point of having a router.
 
@@ -41,6 +41,7 @@ For a parseable per-provider form, use `quintet providers`, which prints one lin
 🟡 agy      installed=yes auth=oauth    ready=yes
 🟢 copilot  installed=yes auth=gh-cli   ready=yes
 🔵 qwen     installed=yes auth=none     ready=no
+🟧 opencode installed=yes auth=oauth    ready=yes
 ```
 
 A provider with `auth=none` is installed but unauthenticated — name it to the user as a one-time fix (commonly `qwen`, which needs one interactive `qwen` run for OAuth), don't treat it as broken. **If doctor shows zero ready providers**, stop — tell the user which CLIs need installing or authenticating and wait until at least one is ready; don't launch against an empty pool or report an empty result as success.

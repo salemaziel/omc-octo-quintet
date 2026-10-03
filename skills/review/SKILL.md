@@ -1,6 +1,6 @@
 ---
 name: review
-description: Runs a multi-model code review of a diff or target file across ready AI provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen), synthesizing severity-ranked findings into a single go/no-go verdict. Use when reviewing code changes, auditing git diffs, checking PRs, inspecting security flaws, or getting multi-AI code reviews.
+description: Runs a multi-model code review of a diff or target file across ready AI provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode), synthesizing severity-ranked findings into a single go/no-go verdict. Use when reviewing code changes, auditing git diffs, checking PRs, inspecting security flaws, or getting multi-AI code reviews.
 metadata:
   version: 0.1.0
   category: multi-agent-orchestration
@@ -17,7 +17,7 @@ Performs multi-perspective code reviews across ready AI provider CLIs for git di
 2. **Execute Review**: Run multi-model review across ready providers:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" review "$(git diff HEAD~1)" claude,agy,copilot}
+!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" review "$(git diff HEAD~1)" claude,agy,opencode}
 ```
 
 3. **Output Validation & Fallback**:

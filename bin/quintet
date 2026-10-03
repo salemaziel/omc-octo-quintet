@@ -22,7 +22,7 @@ VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.js
 
 usage() {
 cat <<'EOF'
-quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, and Qwen CLIs.
+quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, Qwen, and OpenCode CLIs.
 
 TEAM MODE (persistent tmux worker teams):
   quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||t2||..."]
@@ -32,7 +32,7 @@ TEAM MODE (persistent tmux worker teams):
   quintet team shutdown  <name> [--force]
   quintet team list
 
-  <spec> = comma-separated N:provider tokens, e.g.  2:claude,1:qwen,1:copilot
+  <spec> = comma-separated N:provider tokens, e.g.  2:claude,1:opencode,1:qwen
 
 FLEET MODE (one-shot multi-AI dispatch):
   quintet fleet   "<prompt>" [providers]      # fan out, show every answer
@@ -40,7 +40,7 @@ FLEET MODE (one-shot multi-AI dispatch):
   quintet debate  "<question>" [providers]    # 2-round cross-critique
   quintet review  "<diff|file|desc>" [providers]
 
-  [providers] = "all" (default) | comma list, e.g.  claude,codex,agy
+  [providers] = "all" (default) | comma list, e.g.  claude,codex,agy,opencode
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq

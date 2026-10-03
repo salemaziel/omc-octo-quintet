@@ -15,18 +15,21 @@ Complete reference for `quintet` CLI subcommands, options, and environment varia
 ## Provider Spec Syntax
 
 Format: `<count>:<provider>,<count>:<provider>`
-Example: `2:codex,1:agy,1:qwen` (or alias: `1:gemini`)
-Available Providers: `claude`, `codex`, `agy` (alias: `gemini`), `copilot`, `qwen`.
+Example: `2:codex,1:agy,1:opencode` (or alias: `1:gemini`)
+Available Providers: `claude`, `codex`, `agy` (alias: `gemini`), `copilot`, `qwen`, `opencode`.
 
 ## Environment Variables
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `QUINTET_TIMEOUT` | Global one-shot timeout in seconds | 240 |
-| `QUINTET_<PROVIDER>_TIMEOUT` | Per-provider timeout (e.g. `QUINTET_CLAUDE_TIMEOUT`, `QUINTET_AGY_TIMEOUT`) | inherits `QUINTET_TIMEOUT` |
+| `QUINTET_<PROVIDER>_TIMEOUT` | Per-provider timeout (e.g. `QUINTET_CLAUDE_TIMEOUT`, `QUINTET_AGY_TIMEOUT`, `QUINTET_OPENCODE_TIMEOUT`) | inherits `QUINTET_TIMEOUT` |
 | `QUINTET_CB_FAILURE_THRESHOLD` | Circuit breaker failure threshold | 3 |
 | `QUINTET_CB_FAILURE_WINDOW_SECS` | Failure window in seconds | 900 |
 | `QUINTET_CB_COOLDOWN_SECS` | Circuit breaker cooldown seconds | 300 |
 | `QUINTET_AGY_LAUNCH` | Custom launch command for agy team workers | `agy --dangerously-skip-permissions` |
 | `QUINTET_AGY_TIMEOUT` | Custom timeout for agy one-shot calls | 240 |
 | `QUINTET_AGY_WARMUP` | Initial worker warmup delay in seconds | 5 |
+| `QUINTET_OPENCODE_LAUNCH` | Custom launch command for opencode team workers | `opencode --auto` |
+| `QUINTET_OPENCODE_TIMEOUT` | Custom timeout for opencode one-shot calls | inherits `QUINTET_TIMEOUT` |
+| `QUINTET_OPENCODE_WARMUP` | Initial opencode worker warmup delay in seconds | 5 |

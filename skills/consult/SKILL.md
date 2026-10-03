@@ -1,6 +1,6 @@
 ---
 name: consult
-description: Fans out a question across all ready AI provider CLIs in parallel and synthesizes a single recommendation. Use when comparing AI answers, asking multiple models (Claude, Codex, Antigravity / agy, Copilot, Qwen), seeking multi-model consensus, or aggregating opinions on read-only questions.
+description: Fans out a question across all ready AI provider CLIs in parallel and synthesizes a single recommendation. Use when comparing AI answers, asking multiple models (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode), seeking multi-model consensus, or aggregating opinions on read-only questions.
 metadata:
   version: 0.1.0
   category: multi-agent-orchestration
@@ -17,7 +17,7 @@ Fans out a question across ready AI provider CLIs in parallel and synthesizes a 
 2. **Execute Consult**: Fan out the question across ready providers:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" consult "Best approach to dedupe a 10M-row stream in Rust?" claude,codex,agy}
+!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" consult "Best approach to dedupe a 10M-row stream in Rust?" claude,codex,agy,opencode}
 ```
 
 3. **Output Validation & Fallback**:

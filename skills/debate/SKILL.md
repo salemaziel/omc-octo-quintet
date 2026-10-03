@@ -17,7 +17,7 @@ Executes a two-round cross-critique debate across ready AI provider CLIs to surf
 2. **Execute Debate**: Trigger the two-round cross-model debate:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate "Should we use gRPC or REST for this internal service?" claude,codex,agy}
+!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate "Should we use gRPC or REST for this internal service?" claude,codex,agy,opencode}
 ```
 
 3. **Output Validation & Fallback**:

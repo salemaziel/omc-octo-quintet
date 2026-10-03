@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Audits and checks which Quintet provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen) are installed, authenticated, and ready for fleet/team orchestration. Use when checking AI model readiness, diagnosing CLI authentication, or verifying available provider pools.
+description: Audits and checks which Quintet provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) are installed, authenticated, and ready for fleet/team orchestration. Use when checking AI model readiness, diagnosing CLI authentication, or verifying available provider pools.
 metadata:
   version: 0.1.0
   category: multi-agent-orchestration
@@ -30,11 +30,12 @@ Audits installed CLI binaries and authentication states across all Quintet provi
      - **Google Antigravity CLI (agy)**: Run `agy` interactively once to complete authentication, or set `GOOGLE_API_KEY` (Gemini CLI alias: `gemini`)
      - **GitHub Copilot**: `gh auth login` or `copilot auth`
      - **Qwen Code**: `qwen` (run interactively once to complete OAuth)
+     - **OpenCode CLI**: `opencode auth login` or run `opencode` interactively once (install: `npm install -g opencode-ai`)
 
 4. **Re-verification Feedback Loop**:
    - Re-run `"$QBIN" doctor` after authenticating any unready CLI provider to verify the state updated to `ready: true`.
 
-5. **Output Reporting**: Summarize active provider pool capacity (e.g. `4/5 providers ready`) and exclude unready models from subsequent orchestration tasks.
+5. **Output Reporting**: Summarize active provider pool capacity (e.g. `5/6 providers ready`) and exclude unready models from subsequent orchestration tasks.
 
 ## Reference Materials
 

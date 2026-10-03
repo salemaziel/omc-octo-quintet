@@ -195,7 +195,7 @@ Tune dispatch and reliability without editing the CLI:
 | `QUINTET_FAIL_RENDER_CAP` | max chars of a failed provider's output shown when rendering | 1500 |
 | `QUINTET_HOME` | state + debate-transcript root | `~/.quintet` |
 
-`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`). Lower the threshold to fail fast on a flaky provider, or raise the timeout for large review diffs.
+`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`, `OPENCODE`). Lower the threshold to fail fast on a flaky provider, or raise the timeout for large review diffs.
 
 **Breaker note:** the threshold counts only transient failures inside `QUINTET_CB_FAILURE_WINDOW_SECS`, so failures from a previous session no longer pre-trip the breaker on a fresh run. If a breaker is stuck open from old state, clear it with `rm -f "${QUINTET_HOME:-$HOME/.quintet}/provider-state/<provider>.cooldown"` (or wait out the cooldown). The path follows `QUINTET_HOME` when you've overridden it.
 

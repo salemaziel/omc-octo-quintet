@@ -9,5 +9,6 @@ Canonical mapping of quintet providers to the work they're best suited for. This
 | `agy` | Breadth: research-adjacent tasks, large-context synthesis, alternative approaches (Google Antigravity CLI / agy). |
 | `copilot` | An extra independent perspective (uses a GitHub Copilot subscription; 1 premium request per prompt). |
 | `qwen` | Free-tier bulk work (OAuth ~1–2k req/day) — good for volume tasks where cost matters. |
+| `opencode` | Multi-model routing, open-source models, independent logic checks (OpenCode CLI). |
 
-Quick rule of thumb when decomposing a team: **Codex/Claude → implementation, Agy/Gemini → breadth/research, Copilot → extra perspective, Qwen → free-tier bulk**.
+Quick rule of thumb when decomposing a team: **Codex/Claude → implementation, Agy/Gemini → breadth/research, Copilot/OpenCode → independent perspectives, Qwen → free-tier bulk**.

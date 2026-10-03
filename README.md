@@ -1,11 +1,11 @@
 # quintet
 
-**One orchestrator for five coding-agent CLIs.** Quintet drives **Claude Code**, **OpenAI Codex**, **Google Antigravity (agy)**, **GitHub Copilot**, and **Qwen Code** through a single entry point, in two complementary modes:
+**One orchestrator for multiple coding-agent CLIs.** Quintet drives **Claude Code**, **OpenAI Codex**, **Google Antigravity (agy)**, **GitHub Copilot**, **Qwen Code**, and **OpenCode** through a single entry point, in two complementary modes:
 
-- **Team mode** — persistent worker processes in tmux panes that autonomously edit files and coordinate (the [oh-my-claudecode `omc-teams`](https://github.com/Yeachan-Heo/oh-my-claudecode) model, extended to Copilot and Qwen).
+- **Team mode** — persistent worker processes in tmux panes that autonomously edit files and coordinate (the [oh-my-claudecode `omc-teams`](https://github.com/Yeachan-Heo/oh-my-claudecode) model, extended to Copilot, Qwen, and OpenCode).
 - **Fleet mode** — one-shot dispatch of a single prompt to many CLIs in parallel, with a circuit-breaker + fallback reliability layer and `consult` / `debate` / `review` flows (the [claude-octopus](https://github.com/nyldn/claude-octopus) model).
 
-It is **self-contained**: no runtime dependency on omc or octo. The two upstream projects each covered one half — quintet unifies persistent tmux teams *and* multi-provider one-shot dispatch across the full set of five CLIs.
+It is **self-contained**: no runtime dependency on omc or octo. The two upstream projects each covered one half — quintet unifies persistent tmux teams *and* multi-provider one-shot dispatch across the full set of six CLIs.
 
 ## Why
 
@@ -14,13 +14,13 @@ It is **self-contained**: no runtime dependency on omc or octo. The two upstream
 | Persistent tmux worker teams | ✅ | ❌ | ✅ |
 | One-shot multi-AI fleet / debate / review | ❌ | ✅ | ✅ |
 | claude / codex / agy | ✅ | ✅ | ✅ |
-| **copilot / qwen** | ❌ | ✅ (one-shot) | ✅ (**teams + one-shot**) |
+| **copilot / qwen / opencode** | ❌ | ✅ (one-shot) | ✅ (**teams + one-shot**) |
 
-The novel capability quintet adds: running **Copilot and Qwen as persistent coordinating tmux team workers**, alongside Claude/Codex/Agy, under one CLI.
+The novel capability quintet adds: running **Copilot, Qwen, and OpenCode as persistent coordinating tmux team workers**, alongside Claude/Codex/Agy, under one CLI.
 
 ## Install
 
-Quintet ships as a **plugin/extension for all four major coding-agent CLIs** from one repo, distributed via the `vdw-claude-plugins` marketplace where supported.
+Quintet ships as a **plugin/extension for all major coding-agent CLIs** from one repo, distributed via the `vdw-claude-plugins` marketplace where supported.
 
 **Claude Code** (marketplace):
 ```bash
@@ -62,6 +62,8 @@ npm install -g @openai/codex               # codex
 # Google Antigravity CLI                   # agy
 npm install -g @github/copilot             # copilot   (or: brew install copilot-cli)
 npm install -g @qwen-code/qwen-code        # qwen      (free OAuth tier)
+npm install -g opencode-ai                 # opencode  (multi-provider router)
+```
 ```
 
 ## Usage

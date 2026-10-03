@@ -1,6 +1,6 @@
 ---
 name: team
-description: Spawns persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen) to implement features, refactor code, and edit files in parallel. Use when executing multi-file implementation plans, running parallel AI workers, or building complex features concurrently.
+description: Spawns persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) to implement features, refactor code, and edit files in parallel. Use when executing multi-file implementation plans, running parallel AI workers, or building complex features concurrently.
 metadata:
   version: 0.1.0
   category: multi-agent-orchestration
@@ -22,7 +22,7 @@ Launches persistent tmux worker panes to execute parallel file-editing tasks acr
 2. **Launch Worker Team**: Initialize persistent tmux worker panes with assigned subtasks:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" team 2:codex,1:agy "build export feature" --name export --tasks "implement serializer in src/export/||add tests in tests/export/"}
+!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" team 2:codex,1:opencode "build export feature" --name export --tasks "implement serializer in src/export/||add tests in tests/export/"}
 ```
 
 3. **Task Monitoring & Status Polling**:
@@ -45,7 +45,7 @@ Launches persistent tmux worker panes to execute parallel file-editing tasks acr
      ```text
      ## Team Execution Summary
      - **Team Name**: export
-     - **Workers**: 2:codex, 1:agy
+     - **Workers**: 2:codex, 1:opencode
      - **Files Modified**: src/export/serializer.rs, tests/export/test_serializer.rs
      - **Verification**: All 12 unit tests passing (0 failures)
      ```
