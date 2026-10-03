@@ -1,6 +1,6 @@
 ---
-description: Launch a persistent multi-agent CLI worker team in tmux across claude/codex/gemini/copilot/qwen.
-argument-hint: <spec> "<task>"   e.g. 2:codex,1:gemini "build the export feature"
+description: Launch a persistent multi-agent CLI worker team in tmux across claude/codex/agy/copilot/qwen.
+argument-hint: <spec> "<task>"   e.g. 2:codex,1:agy "build the export feature"
 allowed-tools: Bash, Read, Glob, Grep
 ---
 
@@ -17,4 +17,4 @@ Follow the `quintet-team-runtime` skill. Steps:
 4. Monitor with `quintet team status <name>` and `quintet team capture <name>` (poll — don't assume success). Read `.quintet/teams/<name>/taskboard.md`. Steer drifting workers with `quintet team send`.
 5. **Verify the actual files/tests yourself**, then `quintet team shutdown <name>`.
 
-If `$ARGUMENTS` doesn't already contain a spec (like `2:codex,1:gemini`), propose one based on the task and the ready providers before launching.
+If `$ARGUMENTS` doesn't already contain a spec (like `2:codex,1:agy`), propose one based on the task and the ready providers before launching.

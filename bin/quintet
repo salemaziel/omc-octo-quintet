@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # quintet — unified CLI-agent orchestrator.
 #
-#   Persistent tmux worker teams across claude / codex / gemini / copilot / qwen,
+#   Persistent tmux worker teams across claude / codex / agy / copilot / qwen,
 #   plus one-shot multi-AI fleet dispatch (consult / debate / review).
 #
 # Entry point. Sources the lib/, dispatches subcommands. Safe to symlink onto PATH.
@@ -22,7 +22,7 @@ VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.js
 
 usage() {
 cat <<'EOF'
-quintet — orchestrate Claude Code, Codex, Gemini, Copilot, and Qwen CLIs.
+quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, and Qwen CLIs.
 
 TEAM MODE (persistent tmux worker teams):
   quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||t2||..."]
@@ -40,7 +40,7 @@ FLEET MODE (one-shot multi-AI dispatch):
   quintet debate  "<question>" [providers]    # 2-round cross-critique
   quintet review  "<diff|file|desc>" [providers]
 
-  [providers] = "all" (default) | comma list, e.g.  claude,codex,gemini
+  [providers] = "all" (default) | comma list, e.g.  claude,codex,agy
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq

@@ -1,16 +1,16 @@
-# Quintet (Gemini CLI extension)
+# Quintet (Antigravity CLI / Gemini plugin)
 
-Quintet drives five coding-agent CLIs — `claude`, `codex`, `gemini`, `copilot`, `qwen` — through one entry point, the `quintet` binary. It bundles two execution models:
+Quintet drives five coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen` — through one entry point, the `quintet` binary. It bundles two execution models:
 
 - **Team mode** (persistent): long-lived worker processes in tmux that autonomously edit files in parallel. Use for *doing work*.
 - **Fleet mode** (one-shot): a single prompt fanned out to several CLIs headless, with a circuit-breaker + fallback reliability layer. Use for *getting perspectives* (`consult` / `debate` / `review`).
 
 ## Locating the bundled CLI
 
-The CLI ships *inside* this extension — nothing needs to go on your PATH. Gemini installs the extension to `~/.gemini/extensions/quintet/`, so the binary is at `~/.gemini/extensions/quintet/bin/quintet`. Resolve it once per shell and reuse it:
+The CLI ships *inside* this plugin — nothing needs to go on your PATH. Antigravity/Gemini installs the plugin to `~/.gemini/config/plugins/quintet/` (or `~/.gemini/extensions/quintet/`), so the binary is at `~/.gemini/config/plugins/quintet/bin/quintet`. Resolve it once per shell and reuse it:
 
 ```bash
-QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet
+QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet
 "$QBIN" doctor
 ```
 
@@ -31,7 +31,7 @@ When ambiguous ("improve this module with the models"), ask whether they want th
 
 ## Team mode discipline
 
-Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Gemini → breadth/docs, Copilot → extra perspective, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real files and tests**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
+Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Agy → breadth/docs, Copilot → extra perspective, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real files and tests**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
 
 ## Fleet mode discipline
 

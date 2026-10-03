@@ -10,50 +10,50 @@
 #   1. ONE-SHOT  (headless / programmatic) — used by the fleet dispatcher.
 #   2. INTERACTIVE (REPL launch + task injection) — used by the tmux team runtime.
 #
-# Invocation contracts below were verified against the live CLIs (Feb 2026):
+# Invocation contracts below were verified against the live CLIs:
 #   claude   : claude -p "<prompt>"                            (Claude Code print mode)
 #   codex    : codex exec "<prompt>"                            (non-interactive)
-#   gemini   : gemini -p "<prompt>" --approval-mode yolo -o text
+#   agy      : agy -p "<prompt>" --dangerously-skip-permissions --output-format text
 #   copilot  : copilot -p "<prompt>" --no-ask-user -s --disable-builtin-mcps
 #   qwen     : qwen -p "<prompt>" --approval-mode yolo -o text  (Gemini-CLI fork)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Canonical provider list (extend here to add ollama/cursor-agent/etc.).
-QUINTET_PROVIDERS=(claude codex gemini copilot qwen)
+QUINTET_PROVIDERS=(claude codex agy copilot qwen)
 
 # Display emoji per provider (used in fleet reports).
 quintet_provider_emoji() {
     case "$1" in
-        claude)  echo "🟣" ;;
-        codex)   echo "🔴" ;;
-        gemini)  echo "🟡" ;;
-        copilot) echo "🟢" ;;
-        qwen)    echo "🔵" ;;
-        *)       echo "⚪" ;;
+        claude)      echo "🟣" ;;
+        codex)       echo "🔴" ;;
+        agy|gemini)  echo "🟡" ;;
+        copilot)     echo "🟢" ;;
+        qwen)        echo "🔵" ;;
+        *)           echo "⚪" ;;
     esac
 }
 
 # The binary name to look for on PATH for a given provider.
 quintet_provider_bin() {
     case "$1" in
-        claude)  echo "claude" ;;
-        codex)   echo "codex" ;;
-        gemini)  echo "gemini" ;;
-        copilot) echo "copilot" ;;
-        qwen)    echo "qwen" ;;
-        *)       echo "$1" ;;
+        claude)      echo "claude" ;;
+        codex)       echo "codex" ;;
+        agy|gemini)  echo "agy" ;;
+        copilot)     echo "copilot" ;;
+        qwen)        echo "qwen" ;;
+        *)           echo "$1" ;;
     esac
 }
 
 # Install hint shown by `quintet doctor` when a CLI is missing.
 quintet_provider_install_hint() {
     case "$1" in
-        claude)  echo "npm install -g @anthropic-ai/claude-code" ;;
-        codex)   echo "npm install -g @openai/codex" ;;
-        gemini)  echo "npm install -g @google/gemini-cli" ;;
-        copilot) echo "npm install -g @github/copilot  (or: brew install copilot-cli)" ;;
-        qwen)    echo "npm install -g @qwen-code/qwen-code" ;;
-        *)       echo "(unknown provider)" ;;
+        claude)      echo "npm install -g @anthropic-ai/claude-code" ;;
+        codex)       echo "npm install -g @openai/codex" ;;
+        agy|gemini)  echo "Google Antigravity CLI (agy)" ;;
+        copilot)     echo "npm install -g @github/copilot  (or: brew install copilot-cli)" ;;
+        qwen)        echo "npm install -g @qwen-code/qwen-code" ;;
+        *)           echo "(unknown provider)" ;;
     esac
 }
 
@@ -75,9 +75,9 @@ quintet_provider_auth() {
             if [[ -f "${HOME}/.codex/auth.json" ]]; then echo "oauth";
             elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "api-key";
             else echo "none"; fi ;;
-        gemini)
+        agy|gemini)
             if [[ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}" ]]; then echo "api-key";
-            elif [[ -d "${HOME}/.gemini" ]]; then echo "oauth";
+            elif [[ -f "${HOME}/.gemini/oauth_creds.json" || -f "${HOME}/.gemini/google_accounts.json" || -d "${HOME}/.gemini/antigravity-cli" || -d "${HOME}/.gemini" ]]; then echo "oauth";
             else echo "unknown"; fi ;;
         copilot)
             if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then echo "env:COPILOT_GITHUB_TOKEN";
@@ -116,12 +116,12 @@ quintet_provider_oneshot() {
     local t_default="${QUINTET_TIMEOUT:-240}"
     local timeout_secs
     case "$provider" in
-        claude)  timeout_secs="${QUINTET_CLAUDE_TIMEOUT:-$t_default}" ;;
-        codex)   timeout_secs="${QUINTET_CODEX_TIMEOUT:-$t_default}" ;;
-        gemini)  timeout_secs="${QUINTET_GEMINI_TIMEOUT:-$t_default}" ;;
-        copilot) timeout_secs="${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
-        qwen)    timeout_secs="${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
-        *)       timeout_secs="$t_default" ;;
+        claude)      timeout_secs="${QUINTET_CLAUDE_TIMEOUT:-$t_default}" ;;
+        codex)       timeout_secs="${QUINTET_CODEX_TIMEOUT:-$t_default}" ;;
+        agy|gemini)  timeout_secs="${QUINTET_AGY_TIMEOUT:-${QUINTET_GEMINI_TIMEOUT:-$t_default}}" ;;
+        copilot)     timeout_secs="${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
+        qwen)        timeout_secs="${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
+        *)           timeout_secs="$t_default" ;;
     esac
 
     # Build the command (and any env prefix) per provider into an array.
@@ -131,8 +131,8 @@ quintet_provider_oneshot() {
             cmd=(timeout "$timeout_secs" claude -p "$prompt") ;;
         codex)
             cmd=(timeout "$timeout_secs" codex exec "$prompt") ;;
-        gemini)
-            cmd=(timeout "$timeout_secs" gemini -p "$prompt" --approval-mode yolo --skip-trust -o text) ;;
+        agy|gemini)
+            cmd=(timeout "$timeout_secs" agy -p "$prompt" --dangerously-skip-permissions --output-format text) ;;
         copilot)
             # Forward whichever GitHub token is set (env wins over keychain/gh).
             if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
@@ -148,7 +148,7 @@ quintet_provider_oneshot() {
     esac
 
     # Capture stdout (the real answer) and stderr separately so verbose CLI
-    # warnings (gemini/qwen) don't pollute a successful response. On failure we
+    # warnings (agy/qwen) don't pollute a successful response. On failure we
     # fold stderr in so the reliability layer can classify the error.
     local errfile out code
     errfile="$(mktemp "${TMPDIR:-/tmp}/quintet-err.XXXXXX")"
@@ -170,33 +170,35 @@ quintet_provider_oneshot() {
 quintet_provider_launch_cmd() {
     local provider="$1"
     case "$provider" in
-        claude)  echo "${QUINTET_CLAUDE_LAUNCH:-claude --permission-mode bypassPermissions}" ;;
-        codex)   echo "${QUINTET_CODEX_LAUNCH:-codex --yolo}" ;;
-        gemini)  echo "${QUINTET_GEMINI_LAUNCH:-gemini --approval-mode yolo --skip-trust}" ;;
-        copilot) echo "${QUINTET_COPILOT_LAUNCH:-copilot --allow-all-tools}" ;;
+        claude)      echo "${QUINTET_CLAUDE_LAUNCH:-claude --permission-mode bypassPermissions}" ;;
+        codex)       echo "${QUINTET_CODEX_LAUNCH:-codex --yolo}" ;;
+        agy|gemini)  echo "${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-agy --dangerously-skip-permissions}}" ;;
+        copilot)     echo "${QUINTET_COPILOT_LAUNCH:-copilot --allow-all-tools}" ;;
         # qwen is a Gemini-CLI fork WITHOUT --skip-trust; --approval-mode yolo auto-
         # approves tool calls but the workspace stays untrusted, which blocks file
         # writes. Set the trust env vars so a team worker can actually edit the worktree.
-        qwen)    echo "${QUINTET_QWEN_LAUNCH:-env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo}" ;;
-        *)       echo "$(quintet_provider_bin "$provider")" ;;
+        qwen)        echo "${QUINTET_QWEN_LAUNCH:-env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo}" ;;
+        *)           echo "$(quintet_provider_bin "$provider")" ;;
     esac
 }
 
 # Seconds to wait after launching the REPL before injecting the task (cold start).
 quintet_provider_warmup() {
     case "$1" in
-        claude)  echo "${QUINTET_CLAUDE_WARMUP:-6}" ;;
-        codex)   echo "${QUINTET_CODEX_WARMUP:-5}" ;;
-        gemini)  echo "${QUINTET_GEMINI_WARMUP:-5}" ;;
-        copilot) echo "${QUINTET_COPILOT_WARMUP:-6}" ;;
-        qwen)    echo "${QUINTET_QWEN_WARMUP:-5}" ;;
-        *)       echo 5 ;;
+        claude)      echo "${QUINTET_CLAUDE_WARMUP:-6}" ;;
+        codex)       echo "${QUINTET_CODEX_WARMUP:-5}" ;;
+        agy|gemini)  echo "${QUINTET_AGY_WARMUP:-${QUINTET_GEMINI_WARMUP:-5}}" ;;
+        copilot)     echo "${QUINTET_COPILOT_WARMUP:-6}" ;;
+        qwen)        echo "${QUINTET_QWEN_WARMUP:-5}" ;;
+        *)           echo 5 ;;
     esac
 }
 
 # Validate a provider token; die with a helpful message if unknown.
+# "gemini" is accepted as a backwards-compatible alias for "agy".
 quintet_provider_validate() {
     local p="$1"
+    [[ "$p" == "gemini" ]] && return 0
     for known in "${QUINTET_PROVIDERS[@]}"; do
         [[ "$p" == "$known" ]] && return 0
     done

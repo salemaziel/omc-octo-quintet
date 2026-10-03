@@ -1,6 +1,6 @@
 # quintet
 
-**One orchestrator for five coding-agent CLIs.** Quintet drives **Claude Code**, **OpenAI Codex**, **Google Gemini**, **GitHub Copilot**, and **Qwen Code** through a single entry point, in two complementary modes:
+**One orchestrator for five coding-agent CLIs.** Quintet drives **Claude Code**, **OpenAI Codex**, **Google Antigravity (agy)**, **GitHub Copilot**, and **Qwen Code** through a single entry point, in two complementary modes:
 
 - **Team mode** — persistent worker processes in tmux panes that autonomously edit files and coordinate (the [oh-my-claudecode `omc-teams`](https://github.com/Yeachan-Heo/oh-my-claudecode) model, extended to Copilot and Qwen).
 - **Fleet mode** — one-shot dispatch of a single prompt to many CLIs in parallel, with a circuit-breaker + fallback reliability layer and `consult` / `debate` / `review` flows (the [claude-octopus](https://github.com/nyldn/claude-octopus) model).
@@ -13,10 +13,10 @@ It is **self-contained**: no runtime dependency on omc or octo. The two upstream
 | --- | --- | --- | --- |
 | Persistent tmux worker teams | ✅ | ❌ | ✅ |
 | One-shot multi-AI fleet / debate / review | ❌ | ✅ | ✅ |
-| claude / codex / gemini | ✅ | ✅ | ✅ |
+| claude / codex / agy | ✅ | ✅ | ✅ |
 | **copilot / qwen** | ❌ | ✅ (one-shot) | ✅ (**teams + one-shot**) |
 
-The novel capability quintet adds: running **Copilot and Qwen as persistent coordinating tmux team workers**, alongside Claude/Codex/Gemini, under one CLI.
+The novel capability quintet adds: running **Copilot and Qwen as persistent coordinating tmux team workers**, alongside Claude/Codex/Agy, under one CLI.
 
 ## Install
 
@@ -30,9 +30,10 @@ Quintet ships as a **plugin/extension for all four major coding-agent CLIs** fro
 
 **OpenAI Codex** (marketplace): the repo ships `.agents/plugins/marketplace.json`. In Codex, run `/plugins`, switch to the `vdw-claude-plugins` marketplace tab, and install **quintet**.
 
-**Gemini CLI** (extension):
+**Antigravity CLI / Gemini** (plugin/extension):
 ```bash
-gemini extensions install https://github.com/salemaziel/omc-octo-quintet
+agy plugin install https://github.com/salemaziel/omc-octo-quintet
+# or legacy gemini: gemini extensions install https://github.com/salemaziel/omc-octo-quintet
 ```
 
 **GitHub Copilot CLI** (plugin): point Copilot at the repo's root `plugin.json` (it loads `skills/` and the `.copilot/agents/` conductor). Verify with `/skills list` and `/agent`.
@@ -43,7 +44,7 @@ Every ecosystem shells out to the same CLI at `bin/quintet`, **bundled inside th
 
 - **Claude Code** runs it via the absolute `${CLAUDE_PLUGIN_ROOT}/bin/quintet`, and also exposes the plugin's `bin/` on the Bash tool's PATH only while the plugin is enabled (it does not modify your login shell).
 - **Codex** sets `CLAUDE_PLUGIN_ROOT` for plugin compatibility, so the same skills resolve the binary there.
-- **Gemini** finds it at `~/.gemini/extensions/quintet/bin/quintet`.
+- **Antigravity / Gemini** finds it at `~/.gemini/config/plugins/quintet/bin/quintet` (or `~/.gemini/extensions/quintet/bin/quintet`).
 - **Copilot** finds it under `~/.copilot/installed-plugins/.../quintet/bin/quintet`.
 
 Optional — only if you also want to run `quintet` by hand in a normal terminal:
@@ -58,7 +59,7 @@ Requirements: `tmux` (team mode only), `jq` (optional), and at least one of the 
 ```bash
 npm install -g @anthropic-ai/claude-code   # claude
 npm install -g @openai/codex               # codex
-npm install -g @google/gemini-cli          # gemini
+# Google Antigravity CLI                   # agy
 npm install -g @github/copilot             # copilot   (or: brew install copilot-cli)
 npm install -g @qwen-code/qwen-code        # qwen      (free OAuth tier)
 ```
@@ -67,18 +68,18 @@ npm install -g @qwen-code/qwen-code        # qwen      (free OAuth tier)
 
 ```bash
 # Team mode — persistent tmux workers
-quintet team 2:codex,1:gemini,1:qwen "build the export feature" \
+quintet team 2:codex,1:agy,1:qwen "build the export feature" \
     --name export --cwd ./repo \
     --tasks "implement serializer||add tests||write docs||audit edge cases"
 quintet team status export
 quintet team capture export w1-codex 80
-quintet team send export w2-gemini "focus on the v2 API"
+quintet team send export w2-agy "focus on the v2 API"
 quintet team shutdown export --force
 
 # Fleet mode — one-shot across many models
-quintet consult "best way to dedupe a 10M-row stream?" claude,codex,gemini
+quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy
 quintet debate  "gRPC or REST for this internal service?"
-quintet review  "$(git diff HEAD~1)" claude,gemini,copilot
+quintet review  "$(git diff HEAD~1)" claude,agy,copilot
 
 quintet doctor       # provider/tmux/jq readiness
 quintet providers    # per-provider install/auth/ready
@@ -104,7 +105,7 @@ quintet providers    # per-provider install/auth/ready
 | `QUINTET_HOME` | reliability/circuit-breaker state | `~/.quintet` |
 | `QUINTET_CB_FAILURE_THRESHOLD` / `QUINTET_CB_COOLDOWN_SECS` | circuit breaker tuning | 3 / 300 |
 
-`<P>` ∈ `CLAUDE CODEX GEMINI COPILOT QWEN`.
+`<P>` ∈ `CLAUDE CODEX AGY COPILOT QWEN`.
 
 ## Architecture
 

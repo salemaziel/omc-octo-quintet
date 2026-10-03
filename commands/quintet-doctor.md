@@ -1,5 +1,5 @@
 ---
-description: Check readiness of all quintet providers (claude/codex/gemini/copilot/qwen), tmux, and jq.
+description: Check readiness of all quintet providers (claude/codex/agy/copilot/qwen), tmux, and jq.
 allowed-tools: Bash
 ---
 

@@ -9,7 +9,7 @@ Launched: <ISO-8601 timestamp>
 | ----------- | -------- | ----------------------- | ------ |
 | w1-codex    | codex    | src/<module>/           | …      |
 | w2-codex    | codex    | tests/<module>/         | …      |
-| w3-gemini   | gemini   | docs/<page>.md          | …      |
+| w3-agy      | agy      | docs/<page>.md          | …      |
 | w4-qwen     | qwen     | (read-only audit)       | …      |
 
 ## Progress log
@@ -19,7 +19,7 @@ Workers append one line per meaningful step, then a final DONE.
 ```
 [w1-codex] <what changed, where>
 [w2-codex] <what changed, where>
-[w3-gemini] <what changed, where>
+[w3-agy] <what changed, where>
 [w4-qwen] <finding or note>
 [w1-codex] DONE
 ```

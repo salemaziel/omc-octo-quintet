@@ -1,11 +1,11 @@
 ---
 name: quintet-orchestration
-description: Orchestrate multiple coding-agent CLIs (Claude Code, OpenAI Codex, Google Gemini, GitHub Copilot, Qwen Code) as one fleet through the quintet entry point. Use proactively when running several of these AI CLIs at once, when spinning up a multi-agent CLI worker team in tmux, for fanning a single prompt out to many models, or when debating or reviewing across models. Trigger on "quintet", "run codex and gemini and copilot", "orchestrate CLI agents", "ask all the models", "AI debate", "multi-model review". Not for single-model edits or generic multi-agent frameworks unrelated to the quintet CLIs.
+description: Orchestrate multiple coding-agent CLIs (Claude Code, OpenAI Codex, Antigravity / agy, GitHub Copilot, Qwen Code) as one fleet through the quintet entry point. Use proactively when running several of these AI CLIs at once, when spinning up a multi-agent CLI worker team in tmux, for fanning a single prompt out to many models, or when debating or reviewing across models. Trigger on "quintet", "run codex and agy and copilot", "orchestrate CLI agents", "ask all the models", "AI debate", "multi-model review". Not for single-model edits or generic multi-agent frameworks unrelated to the quintet CLIs.
 ---
 
 # Quintet Orchestration
 
-Quintet drives five coding-agent CLIs — `claude`, `codex`, `gemini`, `copilot`, `qwen` — through one entry point: `${CLAUDE_PLUGIN_ROOT}/bin/quintet`.
+Quintet drives five coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen` — through one entry point: `${CLAUDE_PLUGIN_ROOT}/bin/quintet`.
 
 **This skill is the router.** It does exactly four things: check readiness, classify the request (edits vs opinions), pick the mode, and hand off to the skill that owns the procedure. It does **not** run the launch/monitor/verify loop, the debate rounds, or the synthesis — those belong to the procedure skills. Keeping that boundary clean is the entire point of having a router.
 
@@ -38,7 +38,7 @@ For a parseable per-provider form, use `quintet providers`, which prints one lin
 ```text
 🟣 claude   installed=yes auth=oauth    ready=yes
 🔴 codex    installed=yes auth=oauth    ready=yes
-🟡 gemini   installed=yes auth=oauth    ready=yes
+🟡 agy      installed=yes auth=oauth    ready=yes
 🟢 copilot  installed=yes auth=gh-cli   ready=yes
 🔵 qwen     installed=yes auth=none     ready=no
 ```

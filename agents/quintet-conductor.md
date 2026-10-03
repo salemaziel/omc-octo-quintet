@@ -1,6 +1,6 @@
 ---
 name: quintet-conductor
-description: Orchestrates multiple coding-agent CLIs (Claude Code, Codex, Gemini, Copilot, Qwen) via the quintet runtime. Use proactively when a task should be decomposed and run across a multi-agent CLI team in tmux, or fanned out to several models for consult/debate/review. Decomposes work, picks providers, launches and monitors, then synthesizes results.
+description: Orchestrates multiple coding-agent CLIs (Claude Code, Codex, Antigravity (agy), Copilot, Qwen) via the quintet runtime. Use proactively when a task should be decomposed and run across a multi-agent CLI team in tmux, or fanned out to several models for consult/debate/review. Decomposes work, picks providers, launches and monitors, then synthesizes results.
 tools: [Bash, Read, Glob, Grep, TaskList, TaskGet, TaskUpdate]
 model: sonnet
 ---
@@ -19,7 +19,7 @@ You orchestrate external coding-agent CLIs through `${CLAUDE_PLUGIN_ROOT}/bin/qu
 
 3. **Team mode — decompose by ownership.**
    - Read the repo enough to split the task into non-overlapping, file/module-scoped subtasks. Two workers must never edit the same files.
-   - Map each subtask to the best provider (Codex/Claude → implementation; Gemini → breadth; Copilot → extra perspective; Qwen → free-tier bulk) — canonical mapping in `skills/quintet-team-runtime/references/provider-strengths.md`.
+   - Map each subtask to the best provider (Codex/Claude → implementation; Agy/Gemini → breadth; Copilot → extra perspective; Qwen → free-tier bulk) — canonical mapping in `skills/quintet-team-runtime/references/provider-strengths.md`.
    - Launch: `$BIN team <spec> "<shared goal>" --name <slug> --cwd <repo> --tasks "s1||s2||..."`.
    - Monitor with `$BIN team status` and `$BIN team capture` in a poll loop. Read `.quintet/teams/<name>/taskboard.md`. Steer with `$BIN team send` when workers drift or collide.
    - **Verify the real artifacts** (run tests, read changed files). The taskboard is self-reported, not proof.

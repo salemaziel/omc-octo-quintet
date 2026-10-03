@@ -20,7 +20,18 @@ echo "── 2. cli surface ──"
 "$BIN" version  >/dev/null 2>&1 && ok "version" || bad "version"
 "$BIN" help     >/dev/null 2>&1 && ok "help"    || bad "help"
 "$BIN" providers >/dev/null 2>&1 && ok "providers" || bad "providers"
+"$BIN" providers | grep "agy" >/dev/null && ok "providers lists agy" || bad "providers lists agy"
 "$BIN" doctor   >/dev/null 2>&1; [[ $? -le 1 ]] && ok "doctor runs" || bad "doctor runs"
+
+echo "── 2b. agy provider & alias resolution ──"
+source "${ROOT}/lib/common.sh"
+source "${ROOT}/lib/providers.sh"
+source "${ROOT}/lib/team.sh"
+source "${ROOT}/lib/fleet.sh"
+[[ "$(_quintet_parse_spec "1:gemini")" == "agy" ]] && ok "spec parses gemini -> agy" || bad "spec parses gemini -> agy"
+[[ "$(_quintet_parse_spec "1:agy")" == "agy" ]] && ok "spec parses agy" || bad "spec parses agy"
+[[ "$(quintet_provider_bin "agy")" == "agy" ]] && ok "bin for agy is agy" || bad "bin for agy is agy"
+[[ "$(quintet_provider_bin "gemini")" == "agy" ]] && ok "bin for gemini alias is agy" || bad "bin for gemini alias is agy"
 
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then

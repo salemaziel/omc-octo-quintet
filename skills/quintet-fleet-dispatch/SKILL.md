@@ -27,7 +27,7 @@ $BIN consult "Is this regex catastrophic? ^(a+)+$" claude,codex            # cho
 
 ```bash
 $BIN debate  "Should we use gRPC or REST for this internal service?"       # 2-round cross-critique
-$BIN review  "$(git diff HEAD~1)" claude,gemini,copilot                     # multi-model code review
+$BIN review  "$(git diff HEAD~1)" claude,agy,copilot                      # multi-model code review
 ```
 
 `fleet` and `consult` are the same fan-out. `[providers]` defaults to `all`; pass a comma list to narrow. Output arrives under per-provider headers with a status tag:
@@ -39,7 +39,7 @@ Use a streaming hash set keyed on a 64-bit fingerprint…
 == codex [0:ok] ==
 Prefer external merge-sort + dedupe if memory-bound…
 
-== gemini [124:timeout] falling back → copilot ==
+== agy [124:timeout] falling back → copilot ==
 ```
 
 ## What each mode produces
@@ -68,7 +68,7 @@ Given three answers to "gRPC or REST?", don't paste them — resolve them:
 
 ```text
 Consensus (3/3): for an internal, high-throughput, strongly-typed service, gRPC wins.
-Disagreement: gemini flags gRPC's browser/debugging friction; codex and claude
+Disagreement: agy flags gRPC's browser/debugging friction; codex and claude
   judge that irrelevant for service-to-service traffic.
 Recommendation: gRPC, with a thin REST/JSON gateway only if a browser client
   ever needs in. Ship the .proto contract first so both sides can codegen.
@@ -87,7 +87,7 @@ For scripting, `--json` emits a structured result you can post-process (e.g. to 
   "answers": [
     { "provider": "claude", "status": "ok",      "exit": 0,   "text": "Streaming hash set…" },
     { "provider": "codex",  "status": "ok",      "exit": 0,   "text": "External merge-sort…" },
-    { "provider": "gemini", "status": "timeout", "exit": 124, "fallback": "copilot" }
+    { "provider": "agy",    "status": "timeout", "exit": 124, "fallback": "copilot" }
   ]
 }
 ```
@@ -108,15 +108,15 @@ ${CLAUDE_PLUGIN_ROOT}/bin/quintet doctor
 
 The user asks: *"Have the models review this migration script for foot-guns."* That's read-only and one-shot — a textbook `review`.
 
-**1. Check the pool.** `quintet doctor` shows claude/codex/gemini ready, qwen `auth=none`. Use the three ready ones.
+**1. Check the pool.** `quintet doctor` shows claude/codex/agy ready, qwen `auth=none`. Use the three ready ones.
 
 **2. Dispatch the review** with the diff as the target:
 
 ```bash
-$BIN review "$(git diff main -- migrations/0007_add_indexes.sql)" claude,codex,gemini
+$BIN review "$(git diff main -- migrations/0007_add_indexes.sql)" claude,codex,agy
 ```
 
-**3. Read the per-model findings.** Each returns severity-ranked items. claude and codex both flag that `CREATE INDEX` without `CONCURRENTLY` locks the table; gemini additionally notes the migration isn't wrapped to be reversible.
+**3. Read the per-model findings.** Each returns severity-ranked items. claude and codex both flag that `CREATE INDEX` without `CONCURRENTLY` locks the table; agy additionally notes the migration isn't wrapped to be reversible.
 
 **4. Synthesize into one verdict:**
 
@@ -162,10 +162,10 @@ Fleet's value is breadth, but the *right* breadth beats the *most* breadth. Matc
 
 | Question type | Good panel | Why |
 | --- | --- | --- |
-| Architecture / design trade-off | claude, codex, gemini | reasoning depth + a research voice |
+| Architecture / design trade-off | claude, codex, agy | reasoning depth + a research voice |
 | "Is this code correct / safe?" | claude, codex | implementation-grade scrutiny |
-| Broad "did we miss anything?" | gemini, qwen, copilot | cheap breadth catches blind spots |
-| Contested decision (use `debate`) | claude, codex, gemini | strong models that will actually push back |
+| Broad "did we miss anything?" | agy, qwen, copilot | cheap breadth catches blind spots |
+| Contested decision (use `debate`) | claude, codex, agy | strong models that will actually push back |
 
 Omit the provider list to use everyone ready; narrow it when a question doesn't need five voices.
 
@@ -195,7 +195,7 @@ Tune dispatch and reliability without editing the CLI:
 | `QUINTET_FAIL_RENDER_CAP` | max chars of a failed provider's output shown when rendering | 1500 |
 | `QUINTET_HOME` | state + debate-transcript root | `~/.quintet` |
 
-`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `GEMINI`, `COPILOT`, `QWEN`). Lower the threshold to fail fast on a flaky provider, or raise the timeout for large review diffs.
+`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`). Lower the threshold to fail fast on a flaky provider, or raise the timeout for large review diffs.
 
 **Breaker note:** the threshold counts only transient failures inside `QUINTET_CB_FAILURE_WINDOW_SECS`, so failures from a previous session no longer pre-trip the breaker on a fresh run. If a breaker is stuck open from old state, clear it with `rm -f "${QUINTET_HOME:-$HOME/.quintet}/provider-state/<provider>.cooldown"` (or wait out the cooldown). The path follows `QUINTET_HOME` when you've overridden it.
 

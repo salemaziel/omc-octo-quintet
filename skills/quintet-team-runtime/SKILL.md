@@ -1,6 +1,6 @@
 ---
 name: quintet-team-runtime
-description: Operate persistent quintet worker teams — spawn coding-agent CLIs (claude/codex/gemini/copilot/qwen) as long-lived tmux workers, distribute scoped subtasks, monitor, and shut down. Use proactively when running a multi-agent CLI team in tmux, when distributing work across AI workers, for building or refactoring in parallel, or when recovering a stuck or orphaned quintet team. Trigger on "quintet team", "tmux worker team", "parallel AI workers", "spawn agent workers", "run codex and gemini in parallel to build", "distribute subtasks across models". Not for one-shot multi-model questions — use quintet-fleet-dispatch.
+description: Operate persistent quintet worker teams — spawn coding-agent CLIs (claude/codex/agy/copilot/qwen) as long-lived tmux workers, distribute scoped subtasks, monitor, and shut down. Use proactively when running a multi-agent CLI team in tmux, when distributing work across AI workers, for building or refactoring in parallel, or when recovering a stuck or orphaned quintet team. Trigger on "quintet team", "tmux worker team", "parallel AI workers", "spawn agent workers", "run codex and agy in parallel to build", "distribute subtasks across models". Not for one-shot multi-model questions — use quintet-fleet-dispatch.
 ---
 
 # Quintet Team Runtime
@@ -26,7 +26,7 @@ The lifecycle is four phases — launch, monitor, steer, tear down.
 BIN="${CLAUDE_PLUGIN_ROOT}/bin/quintet"
 
 # 1. Launch (distinct subtask per worker, in spec order)
-$BIN team 2:codex,1:gemini,1:qwen "build the export feature" \
+$BIN team 2:codex,1:agy,1:qwen "build the export feature" \
     --name export-feat --cwd /path/to/repo \
     --tasks "implement CSV serializer in src/export/||add unit tests in tests/export/||write docs in docs/export.md||audit edge cases and report to taskboard"
 ```
@@ -40,7 +40,7 @@ $BIN team capture export-feat w1-codex 80
 
 ```bash
 # 3. Steer a worker mid-flight
-$BIN team send export-feat w2-gemini "skip the legacy path; focus on v2 API"
+$BIN team send export-feat w2-agy "skip the legacy path; focus on v2 API"
 ```
 
 ```bash
@@ -50,7 +50,7 @@ $BIN team shutdown export-feat --force   # purge state too
 $BIN team list                           # all running quintet teams
 ```
 
-Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-gemini`); use these exact names for `capture`/`send`.
+Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-agy`); use these exact names for `capture`/`send`.
 
 ### The team manifest
 
@@ -66,7 +66,7 @@ Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-gemini`); use t
   "workers": [
     { "name": "w1-codex",  "provider": "codex" },
     { "name": "w2-codex",  "provider": "codex" },
-    { "name": "w3-gemini", "provider": "gemini" },
+    { "name": "w3-agy",    "provider": "agy" },
     { "name": "w4-qwen",   "provider": "qwen" }
   ]
 }
@@ -82,7 +82,7 @@ Each worker appends status lines to `taskboard.md` and ends with a `DONE` line. 
 
 ```text
 [w1-codex] serializer implemented in src/export/csv.rs
-[w2-gemini] alt approach: stream rows to avoid buffering 10M rows
+[w2-agy] alt approach: stream rows to avoid buffering 10M rows
 [w3-qwen] docs/export.md drafted
 [w1-codex] DONE
 ```
@@ -91,7 +91,7 @@ Treat these as self-reported, not ground truth — read the real files and run t
 
 ## Provider selection
 
-Match each subtask to the provider best suited to it. Quick rule: Codex/Claude for implementation, Gemini for breadth and research, Copilot for an extra perspective, Qwen for free-tier bulk volume. The canonical, maintained mapping is in [references/provider-strengths.md](references/provider-strengths.md).
+Match each subtask to the provider best suited to it. Quick rule: Codex/Claude for implementation, Agy/Gemini for breadth and research, Copilot for an extra perspective, Qwen for free-tier bulk volume. The canonical, maintained mapping is in [references/provider-strengths.md](references/provider-strengths.md).
 
 ## A full worked example
 
@@ -99,11 +99,11 @@ The user wants a CSV export feature built in parallel. Walk the whole lifecycle:
 
 **1. Decompose by ownership.** Four non-overlapping concerns: the serializer (`src/export/`), its tests (`tests/export/`), docs (`docs/`), and an edge-case audit (read-only, writes only to the taskboard). No two workers touch the same files — that is the rule that prevents corruption.
 
-**2. Map providers to work.** Serializer → codex (strong implementer). Tests → a second codex worker. Docs → gemini (good prose/breadth). Audit → qwen (free-tier, fine for a read-and-report pass).
+**2. Map providers to work.** Serializer → codex (strong implementer). Tests → a second codex worker. Docs → agy (good prose/breadth). Audit → qwen (free-tier, fine for a read-and-report pass).
 
 **3. Launch** with the `team` command above, then immediately `team capture export-feat` to confirm every REPL came up and accepted its task (not a bare shell prompt).
 
-**4. Monitor in a poll loop.** Every ~30s: `team status`, skim `team capture`, read `taskboard.md`. When `w2-gemini` drifts into the legacy path, steer it: `team send export-feat w2-gemini "skip legacy; v2 API only"`.
+**4. Monitor in a poll loop.** Every ~30s: `team status`, skim `team capture`, read `taskboard.md`. When `w2-agy` drifts into the legacy path, steer it: `team send export-feat w2-agy "skip legacy; v2 API only"`.
 
 **5. Verify, don't trust.** When the taskboard shows `DONE`, open `src/export/csv.rs`, run `cargo test export`, and confirm the docs exist. Only then `team shutdown export-feat`.
 
@@ -113,7 +113,7 @@ The discipline that makes this work: **scope by files, verify by artifacts.** Ev
 
 - **File ownership**: never give two workers overlapping files. This is the #1 cause of corruption. Scope subtasks by directory/module.
 - **Verify launch**: after starting, run `team capture` to confirm each agent REPL came up and accepted the task. Cold-start warmup is provider-specific (tune via `QUINTET_<PROVIDER>_WARMUP` seconds).
-- **Autonomy flags**: defaults launch agents in **fully unattended** modes so they can write to the worktree without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini --approval-mode yolo --skip-trust`, and `qwen --approval-mode yolo` with `GEMINI_CLI_TRUST_WORKSPACE`/`QWEN_CLI_TRUST_WORKSPACE=true` (qwen lacks `--skip-trust`, so the trust env is what actually unblocks its file writes). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
+- **Autonomy flags**: defaults launch agents in **fully unattended** modes so they can write to the worktree without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, and `qwen --approval-mode yolo` with `GEMINI_CLI_TRUST_WORKSPACE`/`QWEN_CLI_TRUST_WORKSPACE=true` (qwen lacks `--skip-trust`, so the trust env is what actually unblocks its file writes). Anything less (e.g. `acceptEdits`) deadlocks workers on trust/permission gates with no human to dismiss them. Override per provider via `QUINTET_<PROVIDER>_LAUNCH` for stricter sandboxing — but only when a human is watching the panes.
 - **Verify artifacts, not the taskboard**: the taskboard is self-reported; the files and tests are the proof.
 - **No providers ready**: if `doctor` reports an empty pool, the launch fails — authenticate at least one CLI first (see `skills/quintet-orchestration`).
 
@@ -153,7 +153,7 @@ The bottleneck is almost never compute — it's *decomposition quality*. Three w
 
 ## Sandboxing and autonomy
 
-Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `gemini --approval-mode yolo --skip-trust`, and `qwen --approval-mode yolo` (prefixed with `GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true`, since the qwen fork has no `--skip-trust` flag and would otherwise refuse to write in an untrusted directory). This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
+Workers launch in **fully unattended** modes by default so they can work without stopping for approvals — `claude --permission-mode bypassPermissions`, `codex --yolo`, `copilot --allow-all-tools`, `agy --dangerously-skip-permissions`, and `qwen --approval-mode yolo` (prefixed with `GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true`, since the qwen fork has no `--skip-trust` flag and would otherwise refuse to write in an untrusted directory). This is required, not merely convenient: a team worker has no human at its pane, so any mode that pauses on a trust or permission gate (e.g. `claude --permission-mode acceptEdits`) silently deadlocks the whole run. That is the right default for a scratch repo or a worktree, and the wrong one for a production checkout.
 
 The one-shot fleet/debate path is deliberately the opposite: it runs each provider headless and read-only behind the advisory preamble (no file writes expected), so sandbox-default invocations there are fine — the unattended write-access flags above apply only to team workers that are actually doing work.
 
@@ -190,7 +190,7 @@ Tune team behavior without editing the CLI:
 | `QUINTET_<P>_WARMUP` | seconds to wait before injecting the task into a cold REPL | 5–6 |
 | `QUINTET_<P>_LAUNCH` | the interactive launch command for that provider's workers | per provider |
 
-`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `GEMINI`, `COPILOT`, `QWEN`). Raise warmup when a worker's window shows a shell prompt instead of the agent at launch.
+`<P>` is the uppercase provider name (`CLAUDE`, `CODEX`, `AGY`, `COPILOT`, `QWEN`). Raise warmup when a worker's window shows a shell prompt instead of the agent at launch.
 
 ## Related skills
 

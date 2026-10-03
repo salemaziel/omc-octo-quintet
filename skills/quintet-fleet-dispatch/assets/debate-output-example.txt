@@ -1,4 +1,4 @@
-Annotated sample: `quintet debate "gRPC or REST for an internal service?" claude,codex,gemini`
+Annotated sample: `quintet debate "gRPC or REST for an internal service?" claude,codex,agy`
 ============================================================================================
 
 Fleet runs TWO rounds. Round 1 = independent positions. Round 2 = each model
@@ -13,28 +13,28 @@ gRPC. Strong typing via protobuf, HTTP/2 multiplexing, codegen for both ends.
 == codex [0:ok] ==
 gRPC for service-to-service. REST only if a browser is a first-class client.
 
-== gemini [0:ok] ==
+== agy [0:ok] ==
 REST is simpler to debug and curl. gRPC's tooling tax isn't worth it unless
 you're at high RPS.
 
 ─────────────────────────── ROUND 2 (cross-critique) ──────────────────────────
 
 == claude [0:ok] ==
-Holding gRPC. gemini's debugging point is real but solved by grpcurl + server
+Holding gRPC. agy's debugging point is real but solved by grpcurl + server
 reflection; for internal traffic the typing/perf win dominates.
 
 == codex [0:ok] ==
-Agree with claude. Conceding gemini's point only at the edge: expose a thin
+Agree with claude. Conceding agy's point only at the edge: expose a thin
 REST gateway IF a browser client ever appears. Contract-first either way.
 
-== gemini [0:ok] ==
+== agy [0:ok] ==
 Softening: for an INTERNAL high-throughput service, gRPC is defensible. I'd
 still insist on server reflection so debugging doesn't regress.
 
 ──────────────────────────── YOUR SYNTHESIS (write this) ──────────────────────
 
 Consensus after round 2 (3/3): gRPC for this internal service.
-Resolved disagreement: gemini's debugging objection was answered by
+Resolved disagreement: agy's debugging objection was answered by
   grpcurl + server reflection; everyone now accepts that mitigation.
 Still-open: whether to pre-build a REST gateway (codex: only if a browser
   appears later; others: defer).

@@ -1,6 +1,6 @@
 ---
 description: Run a two-round cross-model debate (independent answers, then mutual critique) across the AI CLIs.
-argument-hint: "<question>" [providers]   e.g. "gRPC or REST for this service?" claude,codex,gemini
+argument-hint: "<question>" [providers]   e.g. "gRPC or REST for this service?" claude,codex,agy
 allowed-tools: Bash
 ---
 

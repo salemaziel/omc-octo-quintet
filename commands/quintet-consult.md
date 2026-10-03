@@ -1,6 +1,6 @@
 ---
 description: Fan a single prompt out to several coding-agent CLIs in parallel and synthesize their answers.
-argument-hint: "<question>" [providers]   e.g. "best way to dedupe a stream?" claude,codex,gemini
+argument-hint: "<question>" [providers]   e.g. "best way to dedupe a stream?" claude,codex,agy
 allowed-tools: Bash
 ---
 

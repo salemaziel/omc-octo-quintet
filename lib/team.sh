@@ -23,6 +23,7 @@ _quintet_parse_spec() {
         else
             n=1; provider="$tok"
         fi
+        [[ "$provider" == "gemini" ]] && provider="agy"
         [[ "$n" =~ ^[0-9]+$ ]] || die "bad spec count in '$tok' (use N:provider)"
         quintet_provider_validate "$provider"
         for ((i=0; i<n; i++)); do echo "$provider"; done

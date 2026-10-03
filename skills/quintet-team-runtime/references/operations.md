@@ -4,7 +4,7 @@ Detailed operational reference for persistent quintet teams. The SKILL.md keeps 
 
 ## Worker naming
 
-Workers are auto-named `w<idx>-<provider>`, e.g. `w1-codex`, `w2-gemini`. Use these exact names for `capture`/`send`.
+Workers are auto-named `w<idx>-<provider>`, e.g. `w1-codex`, `w2-agy`. Use these exact names for `capture`/`send`.
 
 ## Coordination model (file-based)
 

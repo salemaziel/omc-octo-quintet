@@ -5,7 +5,7 @@ Expanded routing guidance for the quintet entry point. SKILL.md keeps the mode-s
 ## Command spec syntax
 
 - `<spec>` = comma-separated `N:provider` tokens, e.g. `2:claude,1:codex,1:qwen` (counts of each provider).
-- `[providers]` = `all` (default) or a comma list, e.g. `claude,gemini,copilot`.
+- `[providers]` = `all` (default) or a comma list, e.g. `claude,agy,copilot`.
 
 ## How to decompose for team mode
 
@@ -28,7 +28,7 @@ A single user request often maps to two phases — decide cheaply with fleet, th
 **Phase 1 — decide (fleet).** Sanity-checking a design is read-only, so route to `quintet-fleet-dispatch`:
 
 ```bash
-quintet debate "Token-bucket vs sliding-window rate limiting for a 5k-rps public API in Go?" claude,codex,gemini
+quintet debate "Token-bucket vs sliding-window rate limiting for a 5k-rps public API in Go?" claude,codex,agy
 ```
 
 Synthesize the round-2 positions into one recommendation (say: token-bucket, Redis-backed), noting the live disagreement (in-memory vs Redis under multi-instance deploys).
@@ -36,7 +36,7 @@ Synthesize the round-2 positions into one recommendation (say: token-bucket, Red
 **Phase 2 — build (team).** With the design settled, hand off to `quintet-team-runtime`: decompose by file ownership and launch:
 
 ```bash
-quintet team 1:codex,1:claude,1:gemini "implement token-bucket rate limiting" \
+quintet team 1:codex,1:claude,1:agy "implement token-bucket rate limiting" \
     --name ratelimit --cwd ./api \
     --tasks "limiter middleware in internal/ratelimit/||wire into internal/http/router.go||table tests in internal/ratelimit/limiter_test.go"
 ```

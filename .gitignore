@@ -13,3 +13,4 @@
 auth.json
 .netrc
 id_rsa*
+.gemini-extension-install.json

@@ -83,7 +83,11 @@ _quintet_resolve_providers() {
     else
         # Comma or space separated; strip optional N: prefixes (fleet ignores counts).
         arg="${arg//,/ }"
-        for p in $arg; do candidates+=( "${p##*:}" ); done
+        for p in $arg; do
+            local p_clean="${p##*:}"
+            [[ "$p_clean" == "gemini" ]] && p_clean="agy"
+            candidates+=( "$p_clean" )
+        done
     fi
     for p in "${candidates[@]}"; do
         quintet_provider_validate "$p"
