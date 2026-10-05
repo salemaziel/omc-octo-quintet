@@ -377,19 +377,39 @@ _quintet_any_listed() {
     return 1
 }
 
-# _quintet_group_stop <pgid> <grace> — TERM the process group, wait up to
-# <grace> seconds for it to empty, then KILL whatever is left. Descendants are
-# listed first: a child that moved to its own session (setsid) is out of the
-# group and would be orphaned, so it gets the same signals by pid.
+# _quintet_group_ok <pgid> <starttime> — true if signalling group <pgid> can
+# only reach the group the supervisor created: its leader is still the same
+# process (same start time), or the leader is gone (the kernel doesn't reuse a
+# pid while a group of that id has members; an empty group just gets ESRCH).
+_quintet_group_ok() {
+    local s
+    [[ "$1" =~ ^[0-9]+$ && "$1" -gt 1 ]] || return 1
+    s=$(_quintet_pstat "$1") || return 0
+    [[ -n "$2" && "${s#* }" == "$2" ]]
+}
+
+# _quintet_group_kill <sig> <pgid> <starttime> — signal the group if _quintet_group_ok.
+_quintet_group_kill() {
+    _quintet_group_ok "$2" "$3" && kill "-$1" -- "-$2" 2>/dev/null
+}
+
+# _quintet_group_stop <pgid> <starttime> <grace> — TERM the process group, wait
+# up to <grace> seconds for it to empty, then KILL whatever is left. Descendants
+# are listed first: a child that moved to its own session (setsid) is out of the
+# group and would be orphaned, so it gets the same signals by pid. CONT follows
+# TERM so a stopped CLI (SIGTTOU) gets it now, not at KILL time.
 _quintet_group_stop() {
-    local pg="$1" grace="$2" until
+    local pg="$1" st="$2" grace="$3" until
     local -a desc
+    _quintet_group_ok "$pg" "$st" || return 0
     mapfile -t desc < <(_quintet_descendants "$pg")
-    kill -TERM -- "-$pg" 2>/dev/null
+    _quintet_group_kill TERM "$pg" "$st"
     _quintet_signal_listed TERM "${desc[@]}"
+    _quintet_group_kill CONT "$pg" "$st"
+    _quintet_signal_listed CONT "${desc[@]}"
     until=$(( SECONDS + grace ))
-    while { kill -0 -- "-$pg" 2>/dev/null || _quintet_any_listed "${desc[@]}"; } && (( SECONDS < until )); do sleep 0.2; done
-    kill -KILL -- "-$pg" 2>/dev/null
+    while { _quintet_group_kill 0 "$pg" "$st" || _quintet_any_listed "${desc[@]}"; } && (( SECONDS < until )); do sleep 0.2; done
+    _quintet_group_kill KILL "$pg" "$st"
     _quintet_signal_listed KILL "${desc[@]}"
     return 0
 }
@@ -402,33 +422,39 @@ _quintet_group_stop() {
 # exits, anything it left in its group is killed. INT/TERM/HUP (Ctrl-C, tmux
 # kill-session) stop the group the same way before this shell exits. <tee_to>
 # (optional) gets the new stdout bytes as they arrive (the fleet pane view).
+# The CLI is tracked by pid plus start time, so a reused pid is never signalled.
 _quintet_supervise() {
     local t="$1" in="$2" out="$3" err="$4" tee_to="$5"; shift 6
-    local grace="${QUINTET_KILL_GRACE:-10}" pid rc deadline shown=0 size
+    local grace="${QUINTET_KILL_GRACE:-10}" pid="" st="" rc deadline shown=0 size
     [[ "$t" =~ ^[0-9]+$ ]] || t=240
     [[ "$grace" =~ ^[0-9]+$ ]] || grace=10
+    grace=$(( 10#$grace ))
+    # Set before the spawn so a signal in between still stops the CLI.
+    # If it lands before st is read, read it now, but only while pid is still
+    # this shell's child (a reused pid has another parent).
+    trap '[[ -n "$pid" && -z "$st" && "$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d " ")" == "$BASHPID" ]] && { st=$(_quintet_pstat "$pid") && st="${st#* }"; }
+          [[ -n "$pid" ]] && _quintet_group_stop "$pid" "$st" "$grace"; exit 130' INT TERM HUP
     set -m
     "$@" <"$in" >"$out" 2>"$err" &
     pid=$!
     set +m
-    # shellcheck disable=SC2064  # expand pid/grace now
-    trap "_quintet_group_stop $pid $grace; exit 130" INT TERM HUP
+    st=$(_quintet_pstat "$pid") && st="${st#* }" || st=""
     deadline=$(( SECONDS + 10#$t ))
-    while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+    while [[ -n "$st" ]] && _quintet_listed_alive "$pid:$st" && (( SECONDS < deadline )); do
         if [[ -n "$tee_to" ]]; then
             size=$(wc -c < "$out" 2>/dev/null) || size=0
             (( size > shown )) && { tail -c +"$((shown + 1))" "$out" | head -c "$((size - shown))" >> "$tee_to"; shown=$size; }
         fi
         sleep 0.2
     done
-    if kill -0 "$pid" 2>/dev/null; then
-        _quintet_group_stop "$pid" "$grace"
+    if [[ -n "$st" ]] && _quintet_listed_alive "$pid:$st"; then
+        _quintet_group_stop "$pid" "$st" "$grace"
         wait "$pid" 2>/dev/null
         rc=124
     else
         wait "$pid"; rc=$?
     fi
-    kill -KILL -- "-$pid" 2>/dev/null   # reap leftovers in the CLI's group
+    _quintet_group_kill KILL "$pid" "$st"   # reap leftovers in the CLI's group
     trap - INT TERM HUP
     [[ -n "$tee_to" ]] && tail -c +"$((shown + 1))" "$out" >> "$tee_to" 2>/dev/null
     return "$rc"
