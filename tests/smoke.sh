@@ -877,6 +877,22 @@ for v in CODEX_HOME SSH_AUTH_SOCK XDG_RUNTIME_DIR XDG_CONFIG_HOME NODE_EXTRA_CA_
 $m2ok && ok "env file carries CODEX_HOME, SSH_AUTH_SOCK, XDG_RUNTIME_DIR, CA/proxy/editor vars (R-M2)" || bad "env file carries CODEX_HOME, SSH_AUTH_SOCK, XDG_RUNTIME_DIR, CA/proxy/editor vars (R-M2)"
 grep -q '^declare -x XDG_SESSION_ID=' "$N/envd/m2.env" 2>/dev/null && bad "XDG_SESSION_ID not passed (XDG_* narrowed, R-M2)" || ok "XDG_SESSION_ID not passed (XDG_* narrowed, R-M2)"
 grep -q '^declare -x TERM=' "$N/envd/m2.env" 2>/dev/null && bad "TERM not in the caller-env allowlist (R-M1)" || ok "TERM not in the caller-env allowlist (R-M1)"
+
+# A4 (round 3): locale/terminfo/Node/GH host vars reach every worker; the AWS
+# Bedrock config vars reach claude only.
+( export LANGUAGE=x TERMINFO=/x TERMINFO_DIRS=/x NODE_OPTIONS=x GH_HOST=x \
+    AWS_DEFAULT_REGION=x AWS_CONFIG_FILE=/x AWS_SHARED_CREDENTIALS_FILE=/x
+  quintet_write_worker_env codex "$N/envd/a4c.env"
+  quintet_write_worker_env claude "$N/envd/a4a.env" ) 2>/dev/null
+a4ok=true
+for v in LANGUAGE TERMINFO TERMINFO_DIRS NODE_OPTIONS GH_HOST; do
+    grep -q "^declare -x $v=" "$N/envd/a4c.env" 2>/dev/null || a4ok=false
+done
+for v in AWS_DEFAULT_REGION AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
+    grep -q "^declare -x $v=" "$N/envd/a4a.env" 2>/dev/null || a4ok=false
+    grep -q "^declare -x $v=" "$N/envd/a4c.env" 2>/dev/null && a4ok=false
+done
+$a4ok && ok "env allowlist carries LANGUAGE/TERMINFO*/NODE_OPTIONS/GH_HOST; AWS config vars claude-only (A4)" || bad "env allowlist carries LANGUAGE/TERMINFO*/NODE_OPTIONS/GH_HOST; AWS config vars claude-only (A4)"
 fo=$(nx env CODEX_HOME="$N/codexhome" QUINTET_TEST_WANT="$N/codexhome" \
     QUINTET_CODEX_ONESHOT_CMD='[ "$CODEX_HOME" = "$QUINTET_TEST_WANT" ] && echo codexhome=match || echo codexhome=miss' "$BIN" fleet "hi" codex 2>/dev/null)
 echo "$fo" | grep -q "codexhome=match" && ok "custom CODEX_HOME reaches a codex worker (R-M2)" || bad "custom CODEX_HOME reaches a codex worker (R-M2)"

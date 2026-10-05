@@ -79,6 +79,7 @@ quintet_provider_env_vars() {
             conf=(ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
                   AWS_REGION AWS_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
                   AWS_SESSION_TOKEN AWS_BEARER_TOKEN_BEDROCK
+                  AWS_DEFAULT_REGION AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
                   ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION) ;;
         codex)       auth=(OPENAI_API_KEY); conf=(OPENAI_BASE_URL) ;;
         agy|gemini)  auth=(GEMINI_API_KEY GOOGLE_API_KEY) ;;
@@ -96,11 +97,12 @@ quintet_provider_env_vars() {
 # Env var names every worker gets regardless of provider (QUINTET_* and LC_* are
 # matched by prefix in quintet_write_worker_env). Workers start from an empty
 # environment (env -i), so this also carries what a CLI needs: locale, user
-# identity, shell, timezone, XDG base dirs, CLI config dirs, Vertex/GCP config,
+# identity, shell, timezone, terminfo, Node options, XDG base dirs, CLI config dirs, Vertex/GCP config,
 # ssh-agent/display/dbus sockets, CA bundles, proxies, editor. Non-secret names
 # only. TERM is not here: a worker takes TERM/TMUX/TMUX_PANE from its own
 # terminal (the tmux pane), never from the caller (R-M1).
-QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR COLORTERM LANG USER LOGNAME SHELL TZ
+QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR COLORTERM LANG LANGUAGE USER LOGNAME SHELL TZ
+    TERMINFO TERMINFO_DIRS NODE_OPTIONS GH_HOST
     XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
     CODEX_HOME CLAUDE_CONFIG_DIR GH_CONFIG_DIR
     GOOGLE_GENAI_USE_VERTEXAI GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION GOOGLE_APPLICATION_CREDENTIALS
