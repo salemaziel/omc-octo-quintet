@@ -884,6 +884,9 @@ done
 for pos in "Please log in to continue" "Sign in with your browser:" "Login:"; do
     [[ "$(modal_of "$pos")" == AUTH_REQUIRED ]] && ok "'$pos' is AUTH_REQUIRED (C-L5)" || bad "'$pos' is AUTH_REQUIRED (C-L5)"
 done
+# Phase 0: codex's hook-trust screen is a modal (kickoff holds on it).
+[[ "$(modal_of $'  Hooks need review\n  3 hooks are new or changed.\n  Hooks can run outside the sandbox after you trust them.\n\n› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting (hooks won\'t run)\n\n  Press enter to confirm or esc to go back')" == HOOKS_REVIEW ]] \
+    && ok "codex 'Hooks need review' screen is HOOKS_REVIEW (P0)" || bad "codex 'Hooks need review' screen is HOOKS_REVIEW (P0)"
 
 # C-L6: the team-runtime skill uses the real worker names for 2:codex,1:agy,1:qwen.
 ! grep -q 'w2-agy' "$ROOT/skills/quintet-team-runtime/SKILL.md" && grep -q 'team send export-feat w3-agy' "$ROOT/skills/quintet-team-runtime/SKILL.md" && ok "team-runtime skill sends to w3-agy, not w2-agy (C-L6)" || bad "team-runtime skill sends to w3-agy, not w2-agy (C-L6)"

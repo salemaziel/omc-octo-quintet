@@ -369,7 +369,13 @@ _quintet_detect_worker_modal() {
     tail_buf="$(printf '%s\n' "$buf" | grep -v '^[[:space:]]*$' | tail -n 15)"
     [[ -z "$tail_buf" ]] && return 1
 
-    if echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors|Is this a project you created or one you trust|Yes, I trust this folder|trust the files in this folder|trust the contents of this directory' >/dev/null 2>&1; then
+    # Codex's hook-trust screen: "Hooks need review ... 3. Continue without
+    # trusting ... Press enter to confirm or esc to go back". Enter there picks
+    # whatever is highlighted, so it's held like the folder-trust dialog.
+    if echo "$tail_buf" | grep -qi 'Hooks need review' && echo "$tail_buf" | grep -qi 'Continue without trusting'; then
+        echo "HOOKS_REVIEW"
+        return 0
+    elif echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors|Is this a project you created or one you trust|Yes, I trust this folder|trust the files in this folder|trust the contents of this directory' >/dev/null 2>&1; then
         echo "TRUST_FOLDER"
         return 0
     elif echo "$tail_buf" | grep -Ei 'allow tool call|approve.*tool|\[y/N\]|\(y/n\)|do you want to proceed|run command\?' >/dev/null 2>&1; then
