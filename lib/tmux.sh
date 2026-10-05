@@ -16,6 +16,14 @@ qtmux() { tmux ${QUINTET_TMUX_SOCKET:+-L "$QUINTET_TMUX_SOCKET"} "$@"; }
 
 quintet_tmux_session() { echo "quintet-$1"; }   # team name -> session name
 
+# Pane start prefix for workers: /bin/sh copies the TERM, TMUX and TMUX_PANE that
+# tmux set for this pane into an otherwise empty environment (env -i), then runs
+# the rest of the argv. Workers get tmux's terminal, never the caller's (R-M1).
+# sh, not bash: a non-interactive sh reads no BASH_ENV/startup file, and `exec env`
+# can't hit an exported function, so nothing from the server env runs first.
+# shellcheck disable=SC2016  # expands in the pane's sh
+QUINTET_PANE_ENV_I=(/bin/sh -c 'exec env -i ${TERM:+"TERM=$TERM"} ${TMUX:+"TMUX=$TMUX"} ${TMUX_PANE:+"TMUX_PANE=$TMUX_PANE"} "$@"' quintet-pane)
+
 # Targets are exact: "=sess" for sessions, "=sess:=window" for windows/panes.
 # Without "=", tmux falls back to prefix/glob matching, so "foo" would hit
 # "quintet-foobar" (A2).
@@ -39,7 +47,8 @@ quintet_session_create() {
 # Spawn one worker window. Args: team worker-name cwd "launch-command" env-file
 # The window runs (argv form, no shell parsing by tmux) `env -i bash` that
 # sources the worker's 0600 env file, deletes it, then execs the launch command.
-# The worker's environment is only what the env file holds: nothing leaks in
+# The worker's environment is only what the env file holds plus the pane's own
+# TERM/TMUX/TMUX_PANE (QUINTET_PANE_ENV_I): nothing leaks in
 # from the tmux server's global environment (S-M1). Secrets never appear in
 # tmux/bash argv (A4, A13). remain-on-exit keeps a crashed
 # worker's output inspectable. It's a window option, so the window starts on a
@@ -52,7 +61,7 @@ quintet_window_spawn() {
     qtmux set-option -w -t "=${sess}:=${worker}" remain-on-exit on >/dev/null 2>&1 || true
     # shellcheck disable=SC2016  # $1/$2 expand in the worker's bash, not here
     qtmux respawn-pane -k -t "=${sess}:=${worker}" -c "$cwd" \
-        env -i "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; exec bash -c "$2"' \
+        "${QUINTET_PANE_ENV_I[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; exec bash -c "$2"' \
         quintet-worker "$envf" "$launch" \
         || { log ERROR "tmux: failed to start worker $worker"; qtmux kill-window -t "=${sess}:=${worker}" 2>/dev/null; return 1; }
 }

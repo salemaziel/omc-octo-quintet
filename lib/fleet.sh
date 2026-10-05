@@ -153,6 +153,17 @@ _quintet_bind_bare_cli() {
     done
 }
 
+# Resolve every provider's model/effort once in the caller's shell, so a bad
+# env-sourced value (QUINTET_<P>_MODEL, QUINTET_EFFORT, QUINTET_MODEL_MAP, …)
+# dies here, before any worker launches (S-L4, R-L1). Args: provider...
+_quintet_check_fleet_values() {
+    local p
+    for p in "$@"; do
+        quintet_resolve_model "$p" "${QUINTET_MODEL_MAP:-}" "" "${QUINTET_MODEL_CLI:-}" >/dev/null
+        quintet_resolve_effort "$p" "${QUINTET_EFFORT_MAP:-}" "${QUINTET_EFFORT_CLI:-}" >/dev/null
+    done
+}
+
 # Run one provider one-shot with reliability bookkeeping; write answer to file.
 # Args: provider prompt out_file [no_mcp] [tee_to]
 _quintet_fleet_one() {
@@ -233,11 +244,11 @@ _quintet_fan_out_tmux() {
         qtmux new-window -d -t "=$sess" -n "$p" -c "$PWD" sleep 86400 \
             && qtmux set-option -w -t "=${sess}:=${p}" remain-on-exit on >/dev/null \
             || { log ERROR "fleet: cannot create tmux window for $p"; continue; }
-        # env -i: the worker sees only the env file, not the tmux server's
-        # global environment (S-M1).
+        # env -i: the worker sees only the env file and the pane's own
+        # TERM/TMUX/TMUX_PANE, not the tmux server's global environment (S-M1, R-M1).
         # shellcheck disable=SC2016  # $1/$@ expand in the worker's bash
         qtmux respawn-pane -k -t "=${sess}:=${p}" -c "$PWD" \
-            env -i "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
+            "${QUINTET_PANE_ENV_I[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
             quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp" \
             || { log ERROR "fleet: cannot start worker for $p"; qtmux kill-window -t "=${sess}:=${p}" 2>/dev/null; }
     done
@@ -429,6 +440,7 @@ quintet_fleet_parallel() {
     _quintet_resolve_providers plist "$prov_arg"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
     _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
+    _quintet_check_fleet_values "${plist[@]}"
     local rundir
     rundir="$(_quintet_fan_out "$prompt" "$prov_arg" "${plist[@]}")" || return 1
     [[ -d "$rundir" ]] || return 1
@@ -506,6 +518,7 @@ quintet_fleet_debate() {
     _quintet_resolve_providers plist "$prov_arg"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet debate: no ready providers (run: quintet doctor)"
     _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
+    _quintet_check_fleet_values "${plist[@]}"
 
     log INFO "── debate round 1: independent positions ──"
     local r1

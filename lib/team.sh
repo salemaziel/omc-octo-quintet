@@ -119,6 +119,16 @@ quintet_team_start() {
     [[ "${#workers[@]}" -ge 1 ]] || die "team start: spec produced zero workers"
     [[ "${#workers[@]}" -le 10 ]] || die "team start: max 10 workers (got ${#workers[@]})"
 
+    # Resolve each worker's model/effort now (same inputs as the spawn loop), so a
+    # bad env-sourced value dies before any session or state exists (S-L4, R-L1).
+    local w_chk w_rem w_spec
+    for w_chk in "${workers[@]}"; do
+        w_rem="${w_chk#*:}"; w_spec=""
+        [[ "$w_rem" == *:* ]] && w_spec="${w_rem#*:}"
+        quintet_resolve_model "${w_chk%%:*}" "$model_map" "$w_spec" "$model_bare" >/dev/null
+        quintet_resolve_effort "${w_chk%%:*}" "$effort_map" "$effort_bare" >/dev/null
+    done
+
     # Pre-flight provider auth and readiness verification
     if [[ "$skip_auth" != "true" ]]; then
         local w_entry w_prov custom_launch_var
@@ -168,12 +178,20 @@ quintet_team_start() {
     fi
 
     local tdir; tdir="$(_quintet_team_dir "$name")"
+    # A zero-worker failure removes the team dir only if this start created it;
+    # otherwise it restores the prior taskboard.md (R-L2).
+    local tdir_new=false; [[ -e "$tdir" || -L "$tdir" ]] || tdir_new=true
     ensure_dir "$tdir"
     quintet_state_guard "$name"
     # State files are written to a temp file in the team dir and renamed into
     # place, so a pre-placed taskboard.md / team.json symlink is replaced, never
     # written through (S-M2).
-    local board="${tdir}/taskboard.md" board_tmp
+    local board="${tdir}/taskboard.md" board_tmp board_prev=""
+    # Keep a copy of a prior run's regular-file taskboard (never a symlink's target).
+    if [[ "$tdir_new" == false && -f "$board" && ! -L "$board" ]]; then
+        board_prev="$(mktemp "${tdir}/.taskboard.prev.XXXXXX")" && cp -p -- "$board" "$board_prev" \
+            || die "team start: cannot back up ${board}"
+    fi
     board_tmp="$(mktemp "${tdir}/.taskboard.XXXXXX")" || die "team start: cannot write ${board}"
     {
         echo "# quintet team: $name"
@@ -258,12 +276,21 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
     done
 
     # Zero workers started: don't leave a leader-only session behind (C-M3).
-    # The EXIT trap removes the env dir and releases the lock.
+    # The EXIT trap removes the env dir and releases the lock. Only what this
+    # start wrote is removed: the whole team dir if it created it, else just its
+    # taskboard.md (the prior one is put back). team.json isn't written yet (R-L2).
     if [[ $started -eq 0 ]]; then
         quintet_session_kill "$name"
-        quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams" || log WARN "team start: could not remove $tdir"
-        die "team start: none of the ${#workers[@]} worker(s) started; session and team state removed"
+        if [[ "$tdir_new" == true ]]; then
+            quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams" || log WARN "team start: could not remove $tdir"
+        elif [[ -n "$board_prev" ]]; then
+            _quintet_rename "$board_prev" "$board" || log WARN "team start: could not restore $board"
+        else
+            rm -f -- "$board"
+        fi
+        die "team start: none of the ${#workers[@]} worker(s) started; session and this start's team state removed"
     fi
+    [[ -z "$board_prev" ]] || rm -f -- "$board_prev"
 
     local manifest_tmp
     manifest_tmp="$(mktemp "${tdir}/.team.json.XXXXXX")" || die "team start: cannot write ${manifest}"

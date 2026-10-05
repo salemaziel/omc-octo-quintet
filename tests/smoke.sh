@@ -821,6 +821,86 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 rm -rf "$C"
 
+echo "── 13. worker terminal, env allowlist, one-shot env, env values, escaping, kept state ──"
+# Sandbox: fake HOME/TMPDIR/state, no real provider CLI on PATH (one-shots use
+# QUINTET_<P>_ONESHOT_CMD, team workers a plain bash). Env checks print names or
+# set/unset flags only, never values.
+N="$(mktemp -d)"; mkdir -p "$N/home/.codex" "$N/home/.claude" "$N/tmp" "$N/state" "$N/bin" "$N/stub" "$N/codexhome" "$N/envd"
+touch "$N/home/.codex/auth.json" "$N/home/.claude/.credentials.json"; chmod 700 "$N/envd"
+printf '#!/bin/sh\necho "stub $(basename "$0") must not run" >&2\nexit 99\n' > "$N/bin/codex"; cp "$N/bin/codex" "$N/bin/claude"; chmod +x "$N/bin/codex" "$N/bin/claude"
+printf '#!/bin/bash\ncase " $* " in *" new-window "*) [ -n "$QUINTET_TEST_FAIL_WIN" ] && case " $* " in *" -n $QUINTET_TEST_FAIL_WIN "*) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v tmux)" > "$N/stub/tmux"; chmod +x "$N/stub/tmux"
+nx() { ( export PATH="$N/bin:/usr/bin:/bin" HOME="$N/home" QUINTET_HOME="$N/home/.quintet" QUINTET_STATE_DIR="$N/state" TMPDIR="$N/tmp"
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_MODEL_CLI QUINTET_MODEL_MAP QUINTET_EFFORT_CLI QUINTET_EFFORT_MAP \
+        QUINTET_CLAUDE_MODEL QUINTET_CODEX_MODEL QUINTET_CLAUDE_EFFORT QUINTET_CODEX_EFFORT; "$@" ); }
+
+# R-M1: team and fleet tmux workers get tmux's TERM (and TMUX, TMUX_PANE), not the
+# caller's, whether the caller's TERM is xterm-kitty or unset.
+for tcase in kitty unset; do
+    if [[ "$tcase" == kitty ]]; then tset=(env TERM=xterm-kitty); else tset=(env -u TERM); fi
+    tm="$N/term-$tcase.txt"
+    nx "${tset[@]}" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "term-$tcase-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    dterm="$(ttmux show -gv default-terminal 2>/dev/null)"
+    nx "$BIN" team send "term-$tcase-$$" "w1-claude" "echo \"term=\$TERM pane=\${TMUX_PANE:+set} tmux=\${TMUX:+set}\" > $tm" >/dev/null 2>&1
+    sleep 1.5
+    [[ -n "$dterm" && "$dterm" != xterm-kitty && "$(cat "$tm" 2>/dev/null)" == "term=$dterm pane=set tmux=set" ]] && ok "team worker gets tmux's TERM/TMUX/TMUX_PANE, caller TERM $tcase (R-M1)" || bad "team worker gets tmux's TERM/TMUX/TMUX_PANE, caller TERM $tcase (R-M1)"
+    nx "$BIN" team shutdown "term-$tcase-$$" --force >/dev/null 2>&1
+    fo=$(nx "${tset[@]}" QUINTET_CLAUDE_ONESHOT_CMD='echo "fterm=$TERM pane=${TMUX_PANE:+set} tmux=${TMUX:+set}"' "$BIN" fleet "hi" claude 2>/dev/null)
+    [[ -n "$dterm" ]] && echo "$fo" | grep -qF "fterm=$dterm pane=set tmux=set" && ok "fleet worker gets tmux's TERM/TMUX/TMUX_PANE, caller TERM $tcase (R-M1)" || bad "fleet worker gets tmux's TERM/TMUX/TMUX_PANE, caller TERM $tcase (R-M1)"
+done
+
+# R-M2: non-secret config/connectivity vars are allowlisted; XDG_* is narrowed to
+# the base dirs + XDG_RUNTIME_DIR.
+( export CODEX_HOME=/x SSH_AUTH_SOCK=/x XDG_RUNTIME_DIR=/x XDG_CONFIG_HOME=/x XDG_SESSION_ID=1 NODE_EXTRA_CA_CERTS=/x ALL_PROXY=x EDITOR=x
+  quintet_write_worker_env codex "$N/envd/m2.env" ) 2>/dev/null
+m2ok=true
+for v in CODEX_HOME SSH_AUTH_SOCK XDG_RUNTIME_DIR XDG_CONFIG_HOME NODE_EXTRA_CA_CERTS ALL_PROXY EDITOR; do grep -q "^declare -x $v=" "$N/envd/m2.env" 2>/dev/null || m2ok=false; done
+$m2ok && ok "env file carries CODEX_HOME, SSH_AUTH_SOCK, XDG_RUNTIME_DIR, CA/proxy/editor vars (R-M2)" || bad "env file carries CODEX_HOME, SSH_AUTH_SOCK, XDG_RUNTIME_DIR, CA/proxy/editor vars (R-M2)"
+grep -q '^declare -x XDG_SESSION_ID=' "$N/envd/m2.env" 2>/dev/null && bad "XDG_SESSION_ID not passed (XDG_* narrowed, R-M2)" || ok "XDG_SESSION_ID not passed (XDG_* narrowed, R-M2)"
+grep -q '^declare -x TERM=' "$N/envd/m2.env" 2>/dev/null && bad "TERM not in the caller-env allowlist (R-M1)" || ok "TERM not in the caller-env allowlist (R-M1)"
+fo=$(nx env CODEX_HOME="$N/codexhome" QUINTET_TEST_WANT="$N/codexhome" \
+    QUINTET_CODEX_ONESHOT_CMD='[ "$CODEX_HOME" = "$QUINTET_TEST_WANT" ] && echo codexhome=match || echo codexhome=miss' "$BIN" fleet "hi" codex 2>/dev/null)
+echo "$fo" | grep -q "codexhome=match" && ok "custom CODEX_HOME reaches a codex worker (R-M2)" || bad "custom CODEX_HOME reaches a codex worker (R-M2)"
+
+# S-M1 remainder: --no-tmux one-shots run under env -i with the same allowlist.
+fo=$(nx env NOT_ALLOWED_PROBE=x OPENAI_API_KEY=dummy-not-a-key QUINTET_TEST_PROBE=x \
+    QUINTET_CLAUDE_ONESHOT_CMD='echo "nt other=${NOT_ALLOWED_PROBE:+set} foreign=${OPENAI_API_KEY:+set} quintet=${QUINTET_TEST_PROBE:+set}"' "$BIN" fleet --no-tmux "hi" claude 2>/dev/null)
+echo "$fo" | grep -q "nt other= foreign= quintet=set" && ok "--no-tmux fleet worker: no unlisted var, no foreign provider key (S-M1)" || bad "--no-tmux fleet worker: no unlisted var, no foreign provider key (S-M1)"
+[[ -z "$(find "$N/tmp" -name 'quintet-env1-*' 2>/dev/null)" ]] && ok "one-shot env dir removed (S-M1)" || bad "one-shot env dir removed (S-M1)"
+
+# S-L4 / R-L1: env-sourced model/effort values are validated before any launch.
+out=$(nx env QUINTET_CODEX_MODEL=--x QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet --no-tmux "hi" codex 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "QUINTET_CODEX_MODEL: invalid value" && ! echo "$out" | grep -q "must-not-run" && ok "QUINTET_CODEX_MODEL=--x rejected before launch (R-L1)" || bad "QUINTET_CODEX_MODEL=--x rejected before launch (R-L1)"
+out=$(nx env QUINTET_EFFORT=-x QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "envx-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "QUINTET_EFFORT: invalid value" && ! ttmux has-session -t "=quintet-envx-$$" 2>/dev/null && [[ ! -e "$N/state/teams/envx-$$" ]] && ok "QUINTET_EFFORT=-x rejected before team launch (R-L1)" || bad "QUINTET_EFFORT=-x rejected before team launch (R-L1)"
+ttmux kill-session -t "=quintet-envx-$$" 2>/dev/null
+out=$(nx env QUINTET_MODEL_MAP=codex=-y QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet "hi" codex 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "invalid value" && ! echo "$out" | grep -q "must-not-run" && [[ -z "$(fleet_sessions)" ]] && ok "QUINTET_MODEL_MAP with a dash value rejected before launch (R-L1)" || bad "QUINTET_MODEL_MAP with a dash value rejected before launch (R-L1)"
+
+# R-M3: argv escaping, unit level (the validator would reject these values): run the
+# produced launch command against a stub; each value must arrive as one argv element.
+mkdir -p "$N/escbin"
+printf '#!/bin/bash\nprintf "%%s\\0" "$@" > "%s/esc.argv"\n' "$N" > "$N/escbin/claude"; chmod +x "$N/escbin/claude"
+esc_m="a; touch $N/ESC1 \$(touch $N/ESC2) \`touch $N/ESC3\` \"dq\" 'sq' end"
+esc_e="high; touch $N/ESC4"
+lc="$(quintet_provider_launch_cmd claude false "$esc_m" "$esc_e" true 2>/dev/null)"
+( export PATH="$N/escbin:$PATH"; bash -c "$lc" ) >/dev/null 2>&1
+ea=(); [[ -f "$N/esc.argv" ]] && mapfile -d '' ea < "$N/esc.argv"
+[[ "${#ea[@]}" -eq 4 && "${ea[0]}" == --model && "${ea[1]}" == "$esc_m" && "${ea[2]}" == --effort && "${ea[3]}" == "$esc_e" ]] && ok "metacharacter model/effort reach the CLI as single argv values (R-M3)" || bad "metacharacter model/effort reach the CLI as single argv values (R-M3)"
+[[ -z "$(find "$N" -maxdepth 1 -name 'ESC*' 2>/dev/null)" ]] && ok "no command in a model/effort value ran (R-M3)" || bad "no command in a model/effort value ran (R-M3)"
+
+# R-L2: a zero-worker start keeps a pre-existing team dir and its files; only what
+# this start wrote is removed (the prior taskboard.md is restored).
+KD="$N/state/teams/kept-$$"; mkdir -p "$KD"; echo keep > "$KD/notes.md"; echo prior-board > "$KD/taskboard.md"
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 && "$(cat "$KD/notes.md" 2>/dev/null)" == keep && "$(cat "$KD/taskboard.md" 2>/dev/null)" == prior-board && ! -e "$KD/team.json" && -z "$(find "$KD" -name '.taskboard*' 2>/dev/null)" ]] \
+    && ok "zero-worker start keeps prior notes.md and taskboard.md (R-L2)" || bad "zero-worker start keeps prior notes.md and taskboard.md (R-L2)"
+rm -f "$KD/taskboard.md"
+nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+[[ "$(cat "$KD/notes.md" 2>/dev/null)" == keep && ! -e "$KD/taskboard.md" && ! -e "$N/state/locks/kept-$$.lock" ]] && ! ttmux has-session -t "=quintet-kept-$$" 2>/dev/null \
+    && ok "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)" || bad "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)"
+ttmux kill-session -t "=quintet-kept-$$" 2>/dev/null
+rm -rf "$N"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

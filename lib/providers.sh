@@ -79,8 +79,7 @@ quintet_provider_env_vars() {
             conf=(ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
                   AWS_REGION AWS_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
                   AWS_SESSION_TOKEN AWS_BEARER_TOKEN_BEDROCK
-                  ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
-                  GOOGLE_CLOUD_PROJECT GOOGLE_APPLICATION_CREDENTIALS) ;;
+                  ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION) ;;
         codex)       auth=(OPENAI_API_KEY); conf=(OPENAI_BASE_URL) ;;
         agy|gemini)  auth=(GEMINI_API_KEY GOOGLE_API_KEY) ;;
         copilot)     auth=(COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
@@ -94,16 +93,25 @@ quintet_provider_env_vars() {
     fi
 }
 
-# Env var names every worker gets regardless of provider (QUINTET_*, LC_* and
-# XDG_* are matched by prefix in quintet_write_worker_env). Workers start from an
-# empty environment (env -i), so this also carries what an interactive CLI needs:
-# terminal, locale, user identity, shell, timezone.
-QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR TERM COLORTERM LANG USER LOGNAME SHELL TZ
-    HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy)
+# Env var names every worker gets regardless of provider (QUINTET_* and LC_* are
+# matched by prefix in quintet_write_worker_env). Workers start from an empty
+# environment (env -i), so this also carries what a CLI needs: locale, user
+# identity, shell, timezone, XDG base dirs, CLI config dirs, Vertex/GCP config,
+# ssh-agent/display/dbus sockets, CA bundles, proxies, editor. Non-secret names
+# only. TERM is not here: a worker takes TERM/TMUX/TMUX_PANE from its own
+# terminal (the tmux pane), never from the caller (R-M1).
+QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR COLORTERM LANG USER LOGNAME SHELL TZ
+    XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
+    CODEX_HOME CLAUDE_CONFIG_DIR GH_CONFIG_DIR
+    GOOGLE_GENAI_USE_VERTEXAI GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION GOOGLE_APPLICATION_CREDENTIALS
+    SSH_AUTH_SOCK DISPLAY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS
+    NODE_EXTRA_CA_CERTS SSL_CERT_FILE SSL_CERT_DIR REQUESTS_CA_BUNDLE
+    HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy
+    EDITOR VISUAL)
 
 # quintet_write_worker_env <provider> <file>
 # Writes the caller's exported, allowlisted vars (common + provider's list +
-# QUINTET_* / LC_* / XDG_*) to <file> as `declare -x NAME=<%q value>` lines, mode 0600.
+# QUINTET_* / LC_*) to <file> as `declare -x NAME=<%q value>` lines, mode 0600.
 # The file's dir must already be 0700. Values are never echoed or logged.
 quintet_write_worker_env() {
     local provider="$1" file="$2" v
@@ -114,7 +122,7 @@ quintet_write_worker_env() {
         umask 077
         : > "$file" || exit 1
         while IFS= read -r v; do
-            [[ -n "${allow[$v]:-}" || "$v" == QUINTET_* || "$v" == LC_* || "$v" == XDG_* ]] || continue
+            [[ -n "${allow[$v]:-}" || "$v" == QUINTET_* || "$v" == LC_* ]] || continue
             printf 'declare -x %s=%q\n' "$v" "${!v}"
         done < <(compgen -e) > "$file"
     )
@@ -266,30 +274,34 @@ quintet_parse_cli_value() {
 # quintet_resolve_model <provider> <cli_map> <spec_model> [cli_bare]
 # Decision 3 precedence (CLI beats env at every level):
 #   per-provider CLI map > team spec model > bare --model > QUINTET_<P>_MODEL > QUINTET_MODEL
+# The resolved value is validated wherever it came from (env and env-set
+# QUINTET_MODEL_MAP included), so a bad value dies here (S-L4, R-L1).
 quintet_resolve_model() {
-    local provider="$1" map="$2" spec="$3" bare="${4:-}" v
+    local provider="$1" map="$2" spec="$3" bare="${4:-}" v src="model for $1"
     v="$(_quintet_cli_map_get "$map" "$provider")"
     [[ -n "$v" ]] || v="$spec"
     [[ -n "$v" ]] || v="$bare"
     if [[ -z "$v" ]]; then
         local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
         local pv="QUINTET_${p_upper}_MODEL"
-        v="${!pv:-${QUINTET_MODEL:-}}"
+        if [[ -n "${!pv:-}" ]]; then v="${!pv}"; src="$pv"; else v="${QUINTET_MODEL:-}"; src="QUINTET_MODEL"; fi
     fi
+    [[ -z "$v" ]] || quintet_validate_model_value "$src" "$v"
     printf '%s' "$v"
 }
 
 # quintet_resolve_effort <provider> <cli_map> [cli_bare]
 #   per-provider CLI map > bare --effort > QUINTET_<P>_EFFORT > QUINTET_EFFORT
 quintet_resolve_effort() {
-    local provider="$1" map="$2" bare="${3:-}" v
+    local provider="$1" map="$2" bare="${3:-}" v src="effort for $1"
     v="$(_quintet_cli_map_get "$map" "$provider")"
     [[ -n "$v" ]] || v="$bare"
     if [[ -z "$v" ]]; then
         local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
         local pv="QUINTET_${p_upper}_EFFORT"
-        v="${!pv:-${QUINTET_EFFORT:-}}"
+        if [[ -n "${!pv:-}" ]]; then v="${!pv}"; src="$pv"; else v="${QUINTET_EFFORT:-}"; src="QUINTET_EFFORT"; fi
     fi
+    [[ -z "$v" ]] || quintet_validate_model_value "$src" "$v"
     printf '%s' "$v"
 }
 
@@ -394,11 +406,27 @@ quintet_provider_oneshot() {
     # _q_errdir: set by the fleet caller to its run dir (C-L1).
     local errfile out code
     errfile="$(mktemp "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-err-XXXXXX")"
+    # The CLI runs under env -i with only the worker allowlist (same builder as
+    # the tmux workers, S-M1) plus this process's own TERM/TMUX/TMUX_PANE: the
+    # pane's values in a tmux fleet worker, the caller's terminal with --no-tmux.
+    # The env file lives in a private 0700 dir and is deleted before exec.
+    local envd envf
+    envd="$(mktemp -d "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-env1-XXXXXX")" || { rm -f "$errfile"; log ERROR "one-shot: cannot create env dir"; return 2; }
+    envf="${envd}/${provider}.env"
+    quintet_write_worker_env "$provider" "$envf" || { rm -rf -- "$envd" "$errfile"; log ERROR "one-shot: cannot write env file for $provider"; return 2; }
+    local -a term_env=()
+    [[ -n "${TERM:-}" ]] && term_env+=("TERM=$TERM")
+    [[ -n "${TMUX:-}" ]] && term_env+=("TMUX=$TMUX")
+    [[ -n "${TMUX_PANE:-}" ]] && term_env+=("TMUX_PANE=$TMUX_PANE")
+    # shellcheck disable=SC2016  # $1/$@ expand in the child bash
+    cmd=(env -i "${term_env[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
+         quintet-oneshot "$envf" "${cmd[@]}")
     if [[ -n "$tee_to" ]]; then
         out="$("${cmd[@]}" 2>"$errfile" | tee -a -- "$tee_to"; exit "${PIPESTATUS[0]}")"; code=$?
     else
         out="$("${cmd[@]}" 2>"$errfile")"; code=$?
     fi
+    rm -rf -- "$envd"
     if [[ $code -ne 0 ]]; then
         printf '%s\n%s' "$out" "$(cat "$errfile")"
     else
