@@ -42,7 +42,9 @@ TEAM MODE (persistent tmux worker teams):
   quintet team resume    <name> [worker]   # send kickoff tasks held on a dialog (all if no worker)
   quintet team restart   <name> <worker> [--force]  # respawn one exited worker from team.json and
                                                     # re-send its kickoff file; --force replaces a live one
-  quintet team shutdown  <name> [--force]
+  quintet team shutdown  <name> [--force] [--graceful[=N]]
+                         # --graceful: ask each worker to stop and write a STOPPED line to the
+                         # taskboard, wait until all are idle (at most N s, default 30), then kill
   quintet team list
 
   <spec> = comma-separated N:provider[:role[:model]] tokens, e.g.  2:claude:implementer,1:agy:stock

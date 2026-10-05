@@ -1268,6 +1268,17 @@ out=$(q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub rs)" "$BIN" team restar
     && grep -q "w1-claude RESTARTED" "$Q2/state/teams/rs-$$/taskboard.md" \
     && ok "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)" || bad "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)"
 q2 "$BIN" team shutdown "rs-$$" --force >/dev/null 2>&1
+
+# 5.3: --graceful=N types the stop request, waits (an idle worker ends the wait
+# early), reports STOPPED lines, then kills the session. A bad N is refused.
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub gs)" "$BIN" team 1:claude "t" --name "gs-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+out2=$(q2 "$BIN" team shutdown "gs-$$" --graceful=x 2>&1); rc2=$?
+t0=$(date +%s)
+out=$(q2 "$BIN" team shutdown "gs-$$" --graceful=20 2>&1); rc=$?
+el=$(( $(date +%s) - t0 ))
+[[ $rc -eq 0 && $rc2 -ne 0 && $el -lt 12 ]] && echo "$out2" | grep -q "whole seconds" && grep -q "^Stop now: .*'\[w1-claude\] STOPPED" "$Q2/gs.log" \
+    && echo "$out" | grep -q "0 of 1 worker(s) wrote a STOPPED line" && ! ttmux has-session -t "=quintet-gs-$$" 2>/dev/null \
+    && ok "shutdown --graceful asks, ends the wait once idle, then kills (${el}s, 5.3)" || bad "shutdown --graceful asks, ends the wait once idle, then kills (${el}s, 5.3)"
 rm -rf "$Q2"
 
 rm -rf "$QCWD"

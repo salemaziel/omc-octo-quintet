@@ -765,17 +765,58 @@ quintet_team_send() {
     log INFO "sent to ${name}/${worker}${path:+ (via $path)}"
 }
 
+# _quintet_team_graceful <name> <secs> — ask each live worker (no dialog up) to
+# stop and note where it got to on the taskboard, then wait until every asked
+# worker is idle on two checks in a row (or has exited), at most <secs> seconds.
+_quintet_team_graceful() {
+    local name="$1" secs="$2" w modal rc end quiet=0 busy
+    local board; board="$(_quintet_team_dir "$name")/taskboard.md"
+    local sess; sess="$(quintet_tmux_session "$name")"
+    local -a asked=()
+    while IFS= read -r w; do
+        [[ -n "$w" ]] || continue
+        [[ "$(quintet_tmux_liveness "=${sess}:=${w}")" == alive ]] || continue
+        if modal="$(_quintet_detect_worker_modal "$name" "$w")"; then
+            log WARN "graceful: ${w} shows a dialog (${modal}); not asking it to stop"; continue
+        fi
+        _quintet_team_deliver "$name" "$w" "Stop now: finish or undo the edit you are in, add one line '[${w}] STOPPED: <where you got to>' to ${board}, then do nothing else."; rc=$?
+        [[ $rc -eq 0 ]] || { log WARN "graceful: ${w}: $(_quintet_deliver_msg "$rc")"; continue; }
+        asked+=( "$w" )
+    done < <(quintet_window_list "$name")
+    [[ ${#asked[@]} -ge 1 ]] || { log WARN "graceful: no worker could be asked to stop"; return 0; }
+    log INFO "graceful: asked ${#asked[@]} worker(s) to stop; waiting up to ${secs}s"
+    end=$(( $(now_epoch) + secs ))
+    while (( $(now_epoch) < end )); do
+        sleep 2
+        busy=0
+        for w in "${asked[@]}"; do
+            [[ "$(quintet_tmux_liveness "=${sess}:=${w}")" == alive ]] && _quintet_worker_busy "$name" "$w" && { busy=1; break; }
+        done
+        if (( busy )); then quiet=0; else quiet=$((quiet + 1)); (( quiet >= 2 )) && break; fi
+    done
+    local n=0; [[ -f "$board" ]] && n="$(grep -c '\] STOPPED' "$board" 2>/dev/null)"
+    log INFO "graceful: ${n:-0} of ${#asked[@]} worker(s) wrote a STOPPED line"
+}
+
 quintet_team_shutdown() {
-    local name="${1:-}" force="${2:-}"
+    local name="" a purge=false graceful=""
+    for a in "$@"; do
+        case "$a" in
+            --force|-f)   purge=true ;;
+            --graceful)   graceful=30 ;;
+            --graceful=*) graceful="${a#--graceful=}"
+                          [[ "$graceful" =~ ^[0-9]+$ ]] || die "team shutdown: --graceful=N needs whole seconds (got '$graceful')" ;;
+            -*)           die "team shutdown: unknown flag: $a" ;;
+            *)            [[ -z "$name" ]] || die "usage: quintet team shutdown <name> [--force] [--graceful[=N]]"; name="$a" ;;
+        esac
+    done
     [[ -n "$name" ]] || die "team shutdown: missing team name"
     quintet_validate_team_name "$name"
-    local purge=false
-    if [[ "$force" == "--force" || "$force" == "-f" ]]; then
-        purge=true
-        quintet_state_guard "$name"   # never rm through a symlinked state path (S-H1)
-    fi
+    [[ "$purge" == true ]] && quintet_state_guard "$name"   # never rm through a symlinked state path (S-H1)
     if ! quintet_session_exists "$name"; then
         log WARN "team '$name' has no live session; cleaning state only"
+    elif [[ -n "$graceful" ]]; then
+        _quintet_team_graceful "$name" "$graceful"
     fi
     quintet_session_kill "$name"
     if [[ "$purge" == "true" ]]; then

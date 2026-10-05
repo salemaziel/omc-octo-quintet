@@ -76,7 +76,8 @@ quintet team status auth-feat
 quintet team doctor auth-feat            # inspect worker panes & diagnose confirmation modals
 quintet team capture auth-feat w1-codex-implementer 80
 quintet team send auth-feat w2-agy-code-reviewer "focus on session expiration"
-quintet team shutdown auth-feat --force
+quintet team restart  auth-feat w2-agy-code-reviewer   # bring back one exited worker
+quintet team shutdown auth-feat --graceful=60 --force  # ask workers to stop, wait ≤60 s, then kill
 
 # Fleet mode — one-shot across many models (tmux session with live capture by default)
 quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy --model gpt-6.1-sol --effort high
