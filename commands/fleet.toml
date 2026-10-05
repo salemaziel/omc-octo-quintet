@@ -1,0 +1,9 @@
+description = "Fan a prompt out to several coding-agent CLIs in parallel (one-shot fleet dispatch) and synthesize."
+
+prompt = """
+Dispatch this prompt to the quintet fleet across the ready providers:
+
+!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" fleet {{args}}}
+
+Now synthesize: state the consensus, surface disagreements (noting which model held which view), and give one recommendation with reasoning. Do not paste the raw blocks back — the synthesized verdict is the deliverable.
+"""

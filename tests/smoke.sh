@@ -15,6 +15,8 @@ echo "── 1. syntax ──"
 for f in "$ROOT"/lib/*.sh "$BIN"; do
     bash -n "$f" && ok "syntax: $(basename "$f")" || bad "syntax: $(basename "$f")"
 done
+[[ -f "$ROOT/commands/fleet.toml" ]] && ok "commands/fleet.toml exists" || bad "commands/fleet.toml exists"
+grep -q 'description' "$ROOT/commands/fleet.toml" 2>/dev/null && ok "fleet.toml has description" || bad "fleet.toml has description"
 
 echo "── 2. cli surface ──"
 "$BIN" version  >/dev/null 2>&1 && ok "version" || bad "version"
