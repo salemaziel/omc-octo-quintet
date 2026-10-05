@@ -296,6 +296,9 @@ quintet_fleet_parallel() {
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
+            --safe)    export QUINTET_SAFE_MODE=true; shift ;;
+            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
@@ -319,6 +322,9 @@ quintet_fleet_review() {
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
+            --safe)    export QUINTET_SAFE_MODE=true; shift ;;
+            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
@@ -348,6 +354,9 @@ quintet_fleet_debate() {
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
+            --safe)    export QUINTET_SAFE_MODE=true; shift ;;
+            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"

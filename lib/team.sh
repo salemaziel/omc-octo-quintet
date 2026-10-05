@@ -18,39 +18,56 @@ _quintet_team_dir() { echo "${QUINTET_STATE_DIR}/teams/$1"; }
 # Parse a team spec like "2:claude,1:qwen,1:copilot" or "1:codex:implementer,1:agy:stock"
 # into a flat worker list. Echoes "provider:role" per line. Validates each.
 _quintet_parse_spec() {
-    local spec="$1" tok n provider role i parts
+    local spec="$1" tok n provider role model i parts
     IFS=',' read -ra _toks <<< "$spec"
     for tok in "${_toks[@]}"; do
         tok="${tok// /}"
         [[ -z "$tok" ]] && continue
         IFS=':' read -ra parts <<< "$tok"
+        role="stock"
+        model=""
         if [[ "${#parts[@]}" -eq 1 ]]; then
             n=1
             provider="${parts[0]}"
-            role="stock"
         elif [[ "${#parts[@]}" -eq 2 ]]; then
             if [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then
                 n="${parts[0]}"
                 provider="${parts[1]}"
-                role="stock"
             else
                 n=1
                 provider="${parts[0]}"
                 role="${parts[1]}"
             fi
-        elif [[ "${#parts[@]}" -ge 3 ]]; then
+        elif [[ "${#parts[@]}" -eq 3 ]]; then
+            if [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then
+                n="${parts[0]}"
+                provider="${parts[1]}"
+                role="${parts[2]}"
+            else
+                n=1
+                provider="${parts[0]}"
+                role="${parts[1]}"
+                model="${parts[2]}"
+            fi
+        elif [[ "${#parts[@]}" -ge 4 ]]; then
             n="${parts[0]}"
             provider="${parts[1]}"
             role="${parts[2]}"
+            model="${parts[3]}"
         fi
 
         [[ "$provider" == "gemini" ]] && provider="agy"
-        [[ "$n" =~ ^[0-9]+$ ]] || die "bad spec count in '$tok' (use N:provider or N:provider:role)"
+        [[ -z "$role" ]] && role="stock"
+        [[ "$n" =~ ^[0-9]+$ ]] || die "bad spec count in '$tok' (use N:provider or N:provider:role[:model])"
         quintet_provider_validate "$provider"
         role="$(quintet_normalize_role "$role")"
         quintet_role_exists "$role" || die "unknown role: '$role' in '$tok'"
 
-        for ((i=0; i<n; i++)); do echo "${provider}:${role}"; done
+        if [[ -n "$model" ]]; then
+            for ((i=0; i<n; i++)); do echo "${provider}:${role}:${model}"; done
+        else
+            for ((i=0; i<n; i++)); do echo "${provider}:${role}"; done
+        fi
     done
 }
 
@@ -58,7 +75,13 @@ _quintet_parse_spec() {
 # --tasks lets the caller hand each worker a distinct, pre-decomposed subtask.
 quintet_team_start() {
     quintet_tmux_available || die "tmux is not installed (required for team mode): see https://github.com/tmux/tmux"
-    local spec="" task="" cwd="$PWD" name="" tasks_blob="" skip_auth="${QUINTET_SKIP_AUTH_CHECK:-false}" no_mcp="${QUINTET_NO_MCP:-false}"
+    local spec="" task="" cwd="$PWD" name="" tasks_blob=""
+    local skip_auth="${QUINTET_SKIP_AUTH_CHECK:-false}"
+    local no_mcp="${QUINTET_NO_MCP:-false}"
+    local team_model="${QUINTET_MODEL:-}"
+    local team_effort="${QUINTET_EFFORT:-}"
+    local safe_mode="${QUINTET_SAFE_MODE:-false}"
+
     # First two positionals are spec + task; rest are flags.
     spec="$1"; shift
     task="$1"; shift
@@ -69,6 +92,9 @@ quintet_team_start() {
             --tasks)            tasks_blob="$2"; shift 2 ;;
             --skip-auth-check)  skip_auth=true; shift ;;
             --no-mcp)           no_mcp=true; shift ;;
+            --safe)             safe_mode=true; shift ;;
+            --model)            team_model="$2"; shift 2 ;;
+            --effort)           team_effort="$2"; shift 2 ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
@@ -131,11 +157,17 @@ quintet_team_start() {
     local worker_json="" idx=1
     quintet_session_create "$name" "$cwd"
 
-    local worker_entry provider role worker_name wtask role_prompt
+    local worker_entry provider rem role model worker_name wtask role_prompt
     for worker_entry in "${workers[@]}"; do
         provider="${worker_entry%%:*}"
-        role="${worker_entry#*:}"
-        [[ "$role" == "$worker_entry" ]] && role="stock"
+        rem="${worker_entry#*:}"
+        role="${rem%%:*}"
+        model=""
+        if [[ "$rem" == *:* ]]; then
+            model="${rem#*:}"
+        fi
+        [[ "$role" == "$worker_entry" || -z "$role" ]] && role="stock"
+        [[ -z "$model" ]] && model="$team_model"
 
         if [[ "$role" == "stock" ]]; then
             worker_name="w${idx}-${provider}"
@@ -168,9 +200,9 @@ Coordinate by appending status to ${board} (one line, prefixed with [${worker_na
 Avoid editing files another worker owns. When done, write a final [${worker_name}] DONE line to the taskboard."
 
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
-        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp")" || continue
+        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$team_effort" "$safe_mode")" || continue
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
-        worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}")}"
+        worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}")}"
 
         # Defer task injection: warm up the REPL first, then send.
         ( sleep "$(quintet_provider_warmup "$provider")"; quintet_window_send "$name" "$worker_name" "$injected" ) &

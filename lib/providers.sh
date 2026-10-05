@@ -112,13 +112,24 @@ quintet_provider_ready() {
     return 0
 }
 
-# quintet_provider_oneshot <provider> <prompt> [no_mcp]
+# quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode]
 # Runs the CLI headless, prints the response to stdout, returns the CLI exit code.
 # Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
     local no_mcp="${3:-${QUINTET_NO_MCP:-false}}"
+    local model="${4:-${QUINTET_MODEL:-}}"
+    local effort="${5:-${QUINTET_EFFORT:-}}"
+    local safe_mode="${6:-${QUINTET_SAFE_MODE:-false}}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
+    [[ "$safe_mode" == "--safe" ]] && safe_mode=true
+
+    local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+    local prov_model_var="QUINTET_${p_upper}_MODEL"
+    [[ -n "${!prov_model_var:-}" ]] && model="${!prov_model_var}"
+
+    local prov_effort_var="QUINTET_${p_upper}_EFFORT"
+    [[ -n "${!prov_effort_var:-}" ]] && effort="${!prov_effort_var}"
 
     # Generous defaults: a cold-started headless CLI doing real reasoning routinely
     # needs >120s. The earlier 90–120s ceilings were the main source of exit-124
@@ -138,37 +149,51 @@ quintet_provider_oneshot() {
 
     # Build the command (and any env prefix) per provider into an array.
     local -a cmd=()
-    local custom_cmd_var="QUINTET_$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')_ONESHOT_CMD"
+    local custom_cmd_var="QUINTET_${p_upper}_ONESHOT_CMD"
     if [[ -n "${!custom_cmd_var:-}" ]]; then
         cmd=(bash -c "${!custom_cmd_var}")
     else
         case "$provider" in
             claude)
-                if [[ "$no_mcp" == "true" ]]; then
-                    cmd=(timeout "$timeout_secs" claude -p "$prompt" --strict-mcp-config)
-                else
-                    cmd=(timeout "$timeout_secs" claude -p "$prompt")
-                fi ;;
+                cmd=(timeout "$timeout_secs" claude -p "$prompt")
+                [[ "$no_mcp" == "true" ]] && cmd+=(--strict-mcp-config)
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                [[ -n "$effort" ]] && cmd+=(--effort "$effort")
+                ;;
             codex)
-                if [[ "$no_mcp" == "true" ]]; then
-                    cmd=(timeout "$timeout_secs" codex exec "$prompt" -c mcp_servers={})
-                else
-                    cmd=(timeout "$timeout_secs" codex exec "$prompt")
-                fi ;;
+                cmd=(timeout "$timeout_secs" codex exec "$prompt")
+                [[ "$no_mcp" == "true" ]] && cmd+=(-c mcp_servers={})
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                [[ -n "$effort" ]] && cmd+=(-c "model_reasoning_effort=${effort}")
+                ;;
             agy|gemini)
-                cmd=(timeout "$timeout_secs" agy -p "$prompt" --dangerously-skip-permissions --output-format text) ;;
+                cmd=(timeout "$timeout_secs" agy -p "$prompt")
+                [[ "$safe_mode" != "true" ]] && cmd+=(--dangerously-skip-permissions)
+                cmd+=(--output-format text)
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                [[ -n "$effort" ]] && cmd+=(--effort "$effort")
+                ;;
             copilot)
-                # Forward whichever GitHub token is set (env wins over keychain/gh).
                 if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
                     cmd=(env "COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}")
                 fi
-                cmd+=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps) ;;
+                cmd+=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                ;;
             qwen)
-                # Qwen is a Gemini-CLI fork without --skip-trust; it honors the trust env var.
                 cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
-                     timeout "$timeout_secs" qwen -p "$prompt" --approval-mode yolo -o text) ;;
+                     timeout "$timeout_secs" qwen -p "$prompt")
+                [[ "$safe_mode" != "true" ]] && cmd+=(--approval-mode yolo)
+                cmd+=(-o text)
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                ;;
             opencode)
-                cmd=(timeout "$timeout_secs" opencode run --pure --auto "$prompt") ;;
+                cmd=(timeout "$timeout_secs" opencode run)
+                [[ "$no_mcp" == "true" ]] && cmd+=(--pure)
+                [[ "$safe_mode" != "true" ]] && cmd+=(--auto)
+                [[ -n "$model" ]] && cmd+=(--model "$model")
+                cmd+=("$prompt")
+                ;;
             *)
                 log ERROR "unknown provider for one-shot: $provider"; return 2 ;;
         esac
@@ -190,59 +215,84 @@ quintet_provider_oneshot() {
 }
 
 # ── INTERACTIVE launch (for tmux team workers) ─────────────────────────────────
-# quintet_provider_launch_cmd <provider> [no_mcp] — echoes the shell command that starts
-# the provider's REPL/agent in a tmux pane. The task is injected separately via
-# send-keys after the REPL is ready (see lib/team.sh). Args are overridable so
-# users can tune autonomy/permissions per provider.
+# quintet_provider_launch_cmd <provider> [no_mcp] [model] [effort] [safe_mode]
 quintet_provider_launch_cmd() {
     local provider="$1"
     local no_mcp="${2:-${QUINTET_NO_MCP:-false}}"
+    local model="${3:-${QUINTET_MODEL:-}}"
+    local effort="${4:-${QUINTET_EFFORT:-}}"
+    local safe_mode="${5:-${QUINTET_SAFE_MODE:-false}}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
+    [[ "$safe_mode" == "--safe" ]] && safe_mode=true
+
+    local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+    local prov_model_var="QUINTET_${p_upper}_MODEL"
+    [[ -n "${!prov_model_var:-}" ]] && model="${!prov_model_var}"
+
+    local prov_effort_var="QUINTET_${p_upper}_EFFORT"
+    [[ -n "${!prov_effort_var:-}" ]] && effort="${!prov_effort_var}"
 
     case "$provider" in
         claude)
             if [[ -n "${QUINTET_CLAUDE_LAUNCH:-}" ]]; then
                 echo "$QUINTET_CLAUDE_LAUNCH"
-            elif [[ "$no_mcp" == "true" ]]; then
-                echo "claude --permission-mode bypassPermissions --strict-mcp-config"
             else
-                echo "claude --permission-mode bypassPermissions"
+                local cmd="claude"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --permission-mode bypassPermissions"
+                [[ "$no_mcp" == "true" ]] && cmd+=" --strict-mcp-config"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                [[ -n "$effort" ]] && cmd+=" --effort ${effort}"
+                echo "$cmd"
             fi ;;
         codex)
             if [[ -n "${QUINTET_CODEX_LAUNCH:-}" ]]; then
                 echo "$QUINTET_CODEX_LAUNCH"
-            elif [[ "$no_mcp" == "true" ]]; then
-                echo "codex --yolo -c mcp_servers={}"
             else
-                echo "codex --yolo"
+                local cmd="codex"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --yolo"
+                [[ "$no_mcp" == "true" ]] && cmd+=" -c mcp_servers={}"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort=${effort}"
+                echo "$cmd"
             fi ;;
         agy|gemini)
             if [[ -n "${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-}}" ]]; then
                 echo "${QUINTET_AGY_LAUNCH:-$QUINTET_GEMINI_LAUNCH}"
             else
-                echo "agy --dangerously-skip-permissions"
+                local cmd="agy"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --dangerously-skip-permissions"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                [[ -n "$effort" ]] && cmd+=" --effort ${effort}"
+                echo "$cmd"
             fi ;;
         copilot)
             if [[ -n "${QUINTET_COPILOT_LAUNCH:-}" ]]; then
                 echo "$QUINTET_COPILOT_LAUNCH"
-            elif [[ "$no_mcp" == "true" ]]; then
-                echo "copilot --allow-all-tools --disable-builtin-mcps"
             else
-                echo "copilot --allow-all-tools"
+                local cmd="copilot"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --allow-all-tools"
+                [[ "$no_mcp" == "true" ]] && cmd+=" --disable-builtin-mcps"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                echo "$cmd"
             fi ;;
         qwen)
             if [[ -n "${QUINTET_QWEN_LAUNCH:-}" ]]; then
                 echo "$QUINTET_QWEN_LAUNCH"
             else
-                echo "env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo"
+                local cmd="env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --approval-mode yolo"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                echo "$cmd"
             fi ;;
         opencode)
             if [[ -n "${QUINTET_OPENCODE_LAUNCH:-}" ]]; then
                 echo "$QUINTET_OPENCODE_LAUNCH"
-            elif [[ "$no_mcp" == "true" ]]; then
-                echo "opencode --pure --auto"
             else
-                echo "opencode --auto"
+                local cmd="opencode"
+                [[ "$no_mcp" == "true" ]] && cmd+=" --pure"
+                [[ "$safe_mode" != "true" ]] && cmd+=" --auto"
+                [[ -n "$model" ]] && cmd+=" --model ${model}"
+                echo "$cmd"
             fi ;;
         *)
             echo "$(quintet_provider_bin "$provider")" ;;

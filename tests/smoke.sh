@@ -63,6 +63,13 @@ QUINTET_NO_MCP=true
 [[ "$(quintet_provider_launch_cmd "claude")" == *"strict-mcp-config"* ]] && ok "QUINTET_NO_MCP=true disables MCP by default" || bad "QUINTET_NO_MCP=true disables MCP by default"
 unset QUINTET_NO_MCP
 
+echo "── 2f. model & reasoning effort resolution ──"
+[[ "$(quintet_provider_launch_cmd "codex" false "o3-mini" "high")" == *"codex --yolo --model o3-mini -c model_reasoning_effort=high"* ]] && ok "codex launch with model & effort" || bad "codex launch with model & effort"
+[[ "$(quintet_provider_launch_cmd "agy" false "gemini-2.5-pro" "high")" == *"agy --dangerously-skip-permissions --model gemini-2.5-pro --effort high"* ]] && ok "agy launch with model & effort" || bad "agy launch with model & effort"
+[[ "$(quintet_provider_launch_cmd "claude" false "sonnet" "medium")" == *"claude --permission-mode bypassPermissions --model sonnet --effort medium"* ]] && ok "claude launch with model & effort" || bad "claude launch with model & effort"
+[[ "$(_quintet_parse_spec "1:codex:implementer:o3-mini")" == "codex:implementer:o3-mini" ]] && ok "spec parses 1:codex:implementer:o3-mini" || bad "spec parses 1:codex:implementer:o3-mini"
+[[ "$(_quintet_parse_spec "1:claude::haiku")" == "claude:stock:haiku" ]] && ok "spec parses 1:claude::haiku with stock default" || bad "spec parses 1:claude::haiku with stock default"
+
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
     echo "  ⚠️  tmux not installed — skipping team lifecycle"
