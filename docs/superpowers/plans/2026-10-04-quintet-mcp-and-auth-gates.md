@@ -33,15 +33,15 @@
   - Validates `quintet_provider_ready "$provider"` for every worker in the spec.
   - If a provider is not authenticated and no mock launch override is set (`QUINTET_<P>_LAUNCH`), abort with `die "team start: provider '$provider' is not authenticated. Run: quintet doctor"`.
 
-- [ ] **Step 1: Write failing smoke test for pre-flight auth rejection**
+- [x] **Step 1: Write failing smoke test for pre-flight auth rejection**
   Add a test in `tests/smoke.sh` attempting to spawn an unauthenticated provider in team mode and asserting that it fails before creating a tmux session.
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
   Confirm test fails (current code attempts to create tmux session regardless of auth).
-- [ ] **Step 3: Implement pre-flight auth check in `quintet_team_start`**
+- [x] **Step 3: Implement pre-flight auth check in `quintet_team_start`**
   Check readiness of each parsed provider, allowing `--skip-auth-check` or `QUINTET_<P>_LAUNCH` overrides.
-- [ ] **Step 4: Run test and verify it passes**
+- [x] **Step 4: Run test and verify it passes**
   Run `bash tests/smoke.sh`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git add lib/team.sh tests/smoke.sh && git commit -m "feat(team): add pre-flight provider authentication check before pane spawn"`
 
 ---
@@ -61,15 +61,15 @@
 - Flags: `--no-mcp` accepted in `quintet team`, `quintet fleet`, `quintet consult`, `quintet debate`, `quintet review`.
 - Environment variable: `QUINTET_NO_MCP=true` global toggle.
 
-- [ ] **Step 1: Write failing smoke tests for `--no-mcp` flag propagation**
+- [x] **Step 1: Write failing smoke tests for `--no-mcp` flag propagation**
   Test that `quintet_provider_launch_cmd "claude" --no-mcp` includes `--strict-mcp-config` and `copilot` includes `--disable-builtin-mcps`.
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
   Run `bash tests/smoke.sh`.
-- [ ] **Step 3: Implement MCP flags in `lib/providers.sh` and CLI parsers**
+- [x] **Step 3: Implement MCP flags in `lib/providers.sh` and CLI parsers**
   Update provider launch builders to add MCP-suppressing flags when `--no-mcp` is passed or `QUINTET_NO_MCP=true`.
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
   Run `bash tests/smoke.sh`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git add lib/providers.sh lib/fleet.sh lib/team.sh bin/quintet tests/smoke.sh && git commit -m "feat(mcp): support --no-mcp flag across fleet and team runtimes"`
 
 ---
@@ -84,15 +84,15 @@
 **Interfaces:**
 - `/fleet` command available in AGY/Gemini CLI with prompt and provider arguments.
 
-- [ ] **Step 1: Write failing test verifying all commands in `commands/*.toml` are registered in `gemini-extension.json`**
+- [x] **Step 1: Write failing test verifying all commands in `commands/*.toml` are registered in `gemini-extension.json`**
   Add assertion in `tests/smoke.sh` that `commands/fleet.toml` exists and is declared in `gemini-extension.json`.
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
   Confirm test fails on missing `fleet.toml`.
-- [ ] **Step 3: Create `commands/fleet.toml` and update `gemini-extension.json`**
+- [x] **Step 3: Create `commands/fleet.toml` and update `gemini-extension.json`**
   Add TOML definition for `/fleet` and register in `gemini-extension.json`.
-- [ ] **Step 4: Run test and verify it passes**
+- [x] **Step 4: Run test and verify it passes**
   Run `bash tests/smoke.sh`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git add commands/fleet.toml gemini-extension.json tests/smoke.sh && git commit -m "feat(gemini): add fleet command TOML for AGY parity"`
 
 ---
@@ -104,9 +104,9 @@
 - Modify: `skills/quintet-team-runtime/SKILL.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: Document `--no-mcp` flag and pre-flight auth checks**
+- [x] **Step 1: Document `--no-mcp` flag and pre-flight auth checks**
   Update CLI tables and usage examples in skills and README.
-- [ ] **Step 2: Run full smoke test suite**
+- [x] **Step 2: Run full smoke test suite**
   Execute `bash tests/smoke.sh`.
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   `git add skills/ README.md && git commit -m "docs: document --no-mcp flag and pre-flight auth checks"`

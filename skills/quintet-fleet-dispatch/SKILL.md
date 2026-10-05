@@ -49,6 +49,14 @@ To bypass tmux (e.g. inside CI/CD, restricted containers, or when tmux is not de
 - Pass `--no-tmux`: `$BIN fleet --no-tmux "<prompt>" [providers]`
 - Or set environment variable: `export QUINTET_FLEET_TMUX=false` (or `0`)
 
+### MCP Server Isolation (`--no-mcp`)
+
+Fleet dispatches are intended for fast, advisory multi-model reasoning without tool delays. To ensure models do not load external MCP servers:
+- Pass `--no-mcp`: `$BIN fleet "<prompt>" [providers] --no-mcp`
+- Or set environment variable: `export QUINTET_NO_MCP=true`
+
+This passes `--strict-mcp-config` to Claude, `-c mcp_servers={}` to Codex, `--disable-builtin-mcps` to Copilot, and `--pure` to OpenCode.
+
 Output arrives under per-provider headers with a status tag:
 
 ```text

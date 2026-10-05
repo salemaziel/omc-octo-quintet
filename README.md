@@ -104,6 +104,8 @@ quintet roles        # list available subagent worker roles
 | --- | --- | --- |
 | `QUINTET_TIMEOUT` | global one-shot timeout (s) | 240 |
 | `QUINTET_FLEET_TMUX` | run fleet dispatches in tmux | `true` (when tmux is available) |
+| `QUINTET_NO_MCP` | disable external MCP servers across agents | `false` |
+| `QUINTET_SKIP_AUTH_CHECK` | bypass pre-flight auth validation in team mode | `false` |
 | `QUINTET_<P>_TIMEOUT` | per-provider one-shot timeout | 90–240 |
 | `QUINTET_<P>_LAUNCH` | interactive launch command for team workers | per provider |
 | `QUINTET_<P>_ONESHOT_CMD` | override one-shot command for testing/sandboxes | per provider |

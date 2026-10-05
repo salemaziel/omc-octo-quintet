@@ -73,6 +73,23 @@ Available standard roles (view via `quintet roles`):
 - `devops-troubleshooter`: CI/CD, container, and environment failure triage.
 - `stock`: Baseline prompt without specialized role instructions.
 
+### Pre-flight Auth Checks & Readiness Gates
+
+Before creating any tmux sessions or panes, `quintet team` validates that every provider in the spec is installed and authenticated via `quintet_provider_ready`. If any provider is unready (missing CLI binary or `none` auth), startup halts immediately with diagnostic guidance (`quintet doctor`), preventing deadlocked workers.
+
+**Bypass**: Pass `--skip-auth-check` or set `export QUINTET_SKIP_AUTH_CHECK=true` to skip pre-flight gates (e.g. in test harnesses or custom shell stand-in workers).
+
+### Disabling MCP Servers (`--no-mcp`)
+
+To prevent worker agents from loading extraneous host or global MCP servers that may trigger interactive confirmation modals or consume context:
+- Pass `--no-mcp` to `quintet team`:
+  ```bash
+  $BIN team 1:codex,1:claude "refactor module" --no-mcp
+  ```
+- Or set `export QUINTET_NO_MCP=true` to disable MCP across all workers by default.
+
+This maps automatically to provider isolation flags (`--strict-mcp-config` for Claude, `-c mcp_servers={}` for Codex, `--disable-builtin-mcps` for Copilot, `--pure` for OpenCode).
+
 ### The team manifest
 
 `team.json` is the source of truth for a running team — read it to recover state after a disconnect or to script monitoring:
