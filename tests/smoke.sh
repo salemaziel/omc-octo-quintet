@@ -52,6 +52,15 @@ quintet_role_exists "nonexistent_role" && bad "nonexistent role should not exist
 [[ "$(_quintet_parse_spec "1:agy:implementer")" == "agy:implementer" ]] && ok "spec parses 1:agy:implementer" || bad "spec parses 1:agy:implementer"
 [[ "$(_quintet_parse_spec "2:codex:reviewer")" == $'codex:code-reviewer\ncodex:code-reviewer' ]] && ok "spec parses 2:codex:reviewer with alias" || bad "spec parses 2:codex:reviewer with alias"
 
+echo "── 2e. per-agent mcp toggles ──"
+[[ "$(quintet_provider_launch_cmd "claude" --no-mcp)" == *"strict-mcp-config"* ]] && ok "claude launch with --no-mcp disables MCP" || bad "claude launch with --no-mcp disables MCP"
+[[ "$(quintet_provider_launch_cmd "codex" --no-mcp)" == *"mcp_servers={}"* ]] && ok "codex launch with --no-mcp overrides mcp_servers" || bad "codex launch with --no-mcp overrides mcp_servers"
+[[ "$(quintet_provider_launch_cmd "copilot" --no-mcp)" == *"--disable-builtin-mcps"* ]] && ok "copilot launch with --no-mcp disables MCP" || bad "copilot launch with --no-mcp disables MCP"
+[[ "$(quintet_provider_launch_cmd "opencode" --no-mcp)" == *"--pure"* ]] && ok "opencode launch with --no-mcp runs pure" || bad "opencode launch with --no-mcp runs pure"
+QUINTET_NO_MCP=true
+[[ "$(quintet_provider_launch_cmd "claude")" == *"strict-mcp-config"* ]] && ok "QUINTET_NO_MCP=true disables MCP by default" || bad "QUINTET_NO_MCP=true disables MCP by default"
+unset QUINTET_NO_MCP
+
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
     echo "  ⚠️  tmux not installed — skipping team lifecycle"
@@ -70,7 +79,7 @@ else
     export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"
-    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp >/dev/null 2>&1 && ok "team start" || bad "team start"
+    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp --no-mcp >/dev/null 2>&1 && ok "team start" || bad "team start"
     sleep 3
     "$BIN" team status "$T" >/dev/null 2>&1 && ok "team status" || bad "team status"
     marker="/tmp/quintet-smoke-$$.txt"; rm -f "$marker"
@@ -78,6 +87,7 @@ else
     sleep 2
     [[ -f "$marker" ]] && ok "worker executed injected task" || bad "worker executed injected task"
     grep -E -q '"role"[[:space:]]*:[[:space:]]*"implementer"' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records role" || bad "manifest records role"
+    grep -q '"no_mcp": true' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records no_mcp" || bad "manifest records no_mcp"
     grep -q 'role: implementer' "${QUINTET_STATE_DIR}/teams/${T}/taskboard.md" 2>/dev/null && ok "taskboard records role" || bad "taskboard records role"
     [[ -f "${QUINTET_STATE_DIR}/teams/${T}/team.json" ]] && ok "manifest written" || bad "manifest written"
     "$BIN" team shutdown "$T" --force >/dev/null 2>&1 && ok "team shutdown" || bad "team shutdown"
@@ -89,6 +99,9 @@ echo "── 4. fleet tmux & fallback execution ──"
 export QUINTET_CLAUDE_ONESHOT_CMD='echo "mock claude fleet answer"'
 out_notmux=$("$BIN" fleet --no-tmux "test prompt" claude 2>&1)
 echo "$out_notmux" | grep -q "mock claude fleet answer" && ok "fleet --no-tmux executed" || bad "fleet --no-tmux executed"
+
+out_nomcp=$("$BIN" fleet --no-tmux --no-mcp "test prompt" claude 2>&1)
+echo "$out_nomcp" | grep -q "mock claude fleet answer" && ok "fleet --no-mcp executed" || bad "fleet --no-mcp executed"
 
 if command -v tmux >/dev/null 2>&1; then
     out_tmux=$("$BIN" fleet "test prompt" claude 2>&1)

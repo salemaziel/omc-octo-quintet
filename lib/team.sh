@@ -168,7 +168,7 @@ Coordinate by appending status to ${board} (one line, prefixed with [${worker_na
 Avoid editing files another worker owns. When done, write a final [${worker_name}] DONE line to the taskboard."
 
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
-        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider")" || continue
+        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp")" || continue
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
         worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}")}"
 
@@ -182,6 +182,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "name": %s,\n'    "$(json_escape "$name")"
         printf '  "cwd": %s,\n'     "$(json_escape "$cwd")"
         printf '  "session": %s,\n' "$(json_escape "$(quintet_tmux_session "$name")")"
+        printf '  "no_mcp": %s,\n'  "$no_mcp"
         printf '  "started": %s,\n' "$(json_escape "$(now_iso)")"
         printf '  "goal": %s,\n'    "$(json_escape "$task")"
         printf '  "workers": [%s]\n' "$worker_json"

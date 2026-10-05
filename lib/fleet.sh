@@ -102,12 +102,13 @@ _quintet_resolve_providers() {
 }
 
 # Run one provider one-shot with reliability bookkeeping; write answer to file.
-# Args: provider prompt out_file
+# Args: provider prompt out_file [no_mcp]
 _quintet_fleet_one() {
     local provider="$1" prompt="$2" out="$3"
+    local no_mcp="${4:-${QUINTET_NO_MCP:-false}}"
     local resp code start end secs
     start=$(now_epoch)
-    resp=$(quintet_provider_oneshot "$provider" "$prompt"); code=$?
+    resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp"); code=$?
     end=$(now_epoch); secs=$(( end - start ))
     if [[ $code -ne 0 ]]; then
         local class; class=$(record_failure "$provider" "$code" "$resp")
@@ -126,15 +127,16 @@ _quintet_fleet_one() {
 # Internal worker entry point invoked inside tmux windows
 quintet_fleet_worker() {
     local provider="$1" prompt_file="$2" out_file="$3"
+    local no_mcp="${4:-${QUINTET_NO_MCP:-false}}"
     [[ -f "$prompt_file" ]] || die "fleet worker: missing prompt file '$prompt_file'"
     local prompt
     prompt="$(cat "$prompt_file")"
-    _quintet_fleet_one "$provider" "$prompt" "$out_file"
+    _quintet_fleet_one "$provider" "$prompt" "$out_file" "$no_mcp"
 }
 
 _quintet_fan_out_tmux() {
-    local prompt="$1" rundir="$2"
-    shift 2
+    local prompt="$1" rundir="$2" no_mcp="${3:-false}"
+    shift 3
     local -a providers=("$@")
 
     local prompt_file="${rundir}/prompt.txt"
@@ -157,7 +159,7 @@ _quintet_fan_out_tmux() {
         log INFO "dispatching (tmux) → $(quintet_provider_emoji "$p") $p"
         out="${rundir}/${p}.out"
         tmux new-window -t "$sess" -n "$p" -c "$PWD" \
-            "bash -c 'if [ -f \"$env_dump\" ]; then source \"$env_dump\"; fi; exec \"${QUINTET_ROOT}/bin/quintet\" __fleet_worker \"$p\" \"$prompt_file\" \"$out\"'"
+            "bash -c 'if [ -f \"$env_dump\" ]; then source \"$env_dump\"; fi; exec \"${QUINTET_ROOT}/bin/quintet\" __fleet_worker \"$p\" \"$prompt_file\" \"$out\" \"$no_mcp\"'"
     done
 
     # Poll status files for completion
@@ -194,6 +196,12 @@ _quintet_fan_out_tmux() {
 _quintet_fan_out() {
     local prompt="$1" provider_arg="$2"
     local use_tmux=true
+
+    local no_mcp="${QUINTET_NO_MCP:-false}"
+    if [[ "$provider_arg" == *--no-mcp* ]]; then
+        no_mcp=true
+        provider_arg="${provider_arg//--no-mcp/}"
+    fi
 
     # Check env var toggle
     if [[ "${QUINTET_FLEET_TMUX:-true}" == "false" || "${QUINTET_FLEET_TMUX:-true}" == "0" ]]; then
@@ -232,7 +240,7 @@ ${prompt}"
     local ran_tmux=false
 
     if [[ "$use_tmux" == "true" ]]; then
-        if _quintet_fan_out_tmux "$prompt" "$rundir" "${providers[@]}"; then
+        if _quintet_fan_out_tmux "$prompt" "$rundir" "$no_mcp" "${providers[@]}"; then
             ran_tmux=true
         else
             log WARN "failed to initialize tmux fleet session; falling back to direct background subshells"
@@ -242,7 +250,7 @@ ${prompt}"
     if [[ "$ran_tmux" == "false" ]]; then
         for p in "${providers[@]}"; do
             log INFO "dispatching → $(quintet_provider_emoji "$p") $p"
-            _quintet_fleet_one "$p" "$prompt" "${rundir}/${p}.out" &
+            _quintet_fleet_one "$p" "$prompt" "${rundir}/${p}.out" "$no_mcp" &
         done
         wait
     fi
@@ -255,7 +263,7 @@ ${prompt}"
             # don't double-run a provider we already used
             printf '%s\n' "${providers[@]}" | grep -qx "$fb" && continue
             log WARN "$p failed (${st#*:}); falling back → $fb"
-            _quintet_fleet_one "$fb" "$prompt" "${rundir}/${p}__fallback_${fb}.out"
+            _quintet_fleet_one "$fb" "$prompt" "${rundir}/${p}__fallback_${fb}.out" "$no_mcp"
         fi
     done
     echo "$rundir"
@@ -287,6 +295,7 @@ quintet_fleet_parallel() {
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
@@ -309,6 +318,7 @@ quintet_fleet_review() {
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
@@ -337,6 +347,7 @@ quintet_fleet_debate() {
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"

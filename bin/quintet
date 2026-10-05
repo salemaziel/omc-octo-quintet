@@ -32,20 +32,20 @@ cat <<'EOF'
 quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, Qwen, and OpenCode CLIs.
 
 TEAM MODE (persistent tmux worker teams):
-  quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||t2||..."]
+  quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||..."] [--skip-auth-check] [--no-mcp]
   quintet team status   <name>
   quintet team capture  <name> [worker] [lines]
   quintet team send      <name> <worker> "<text>"
   quintet team shutdown  <name> [--force]
   quintet team list
 
-  <spec> = comma-separated N:provider tokens, e.g.  2:claude,1:opencode,1:qwen
+  <spec> = comma-separated N:provider[:role] tokens, e.g.  2:claude:implementer,1:agy:stock
 
-FLEET MODE (one-shot multi-AI dispatch):
-  quintet fleet   "<prompt>" [providers]      # fan out, show every answer
-  quintet consult "<prompt>" [providers]      # alias of fleet (advisory)
-  quintet debate  "<question>" [providers]    # 2-round cross-critique
-  quintet review  "<diff|file|desc>" [providers]
+FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
+  quintet fleet   "<prompt>" [providers] [--no-tmux] [--no-mcp]      # fan out, show every answer
+  quintet consult "<prompt>" [providers] [--no-tmux] [--no-mcp]      # alias of fleet (advisory)
+  quintet debate  "<question>" [providers] [--no-tmux] [--no-mcp]    # 2-round cross-critique
+  quintet review  "<diff|file|desc>" [providers] [--no-tmux] [--no-mcp]
 
   [providers] = "all" (default) | comma list, e.g.  claude,codex,agy,opencode
 

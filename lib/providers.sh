@@ -112,12 +112,14 @@ quintet_provider_ready() {
     return 0
 }
 
-# ── ONE-SHOT dispatch ──────────────────────────────────────────────────────────
-# quintet_provider_oneshot <provider> <prompt>
+# quintet_provider_oneshot <provider> <prompt> [no_mcp]
 # Runs the CLI headless, prints the response to stdout, returns the CLI exit code.
 # Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
+    local no_mcp="${3:-${QUINTET_NO_MCP:-false}}"
+    [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
+
     # Generous defaults: a cold-started headless CLI doing real reasoning routinely
     # needs >120s. The earlier 90–120s ceilings were the main source of exit-124
     # timeouts (compounded by agentic file-exploration, now suppressed by the
@@ -142,9 +144,17 @@ quintet_provider_oneshot() {
     else
         case "$provider" in
             claude)
-                cmd=(timeout "$timeout_secs" claude -p "$prompt") ;;
+                if [[ "$no_mcp" == "true" ]]; then
+                    cmd=(timeout "$timeout_secs" claude -p "$prompt" --strict-mcp-config)
+                else
+                    cmd=(timeout "$timeout_secs" claude -p "$prompt")
+                fi ;;
             codex)
-                cmd=(timeout "$timeout_secs" codex exec "$prompt") ;;
+                if [[ "$no_mcp" == "true" ]]; then
+                    cmd=(timeout "$timeout_secs" codex exec "$prompt" -c mcp_servers={})
+                else
+                    cmd=(timeout "$timeout_secs" codex exec "$prompt")
+                fi ;;
             agy|gemini)
                 cmd=(timeout "$timeout_secs" agy -p "$prompt" --dangerously-skip-permissions --output-format text) ;;
             copilot)
@@ -180,23 +190,62 @@ quintet_provider_oneshot() {
 }
 
 # ── INTERACTIVE launch (for tmux team workers) ─────────────────────────────────
-# quintet_provider_launch_cmd <provider> — echoes the shell command that starts
+# quintet_provider_launch_cmd <provider> [no_mcp] — echoes the shell command that starts
 # the provider's REPL/agent in a tmux pane. The task is injected separately via
 # send-keys after the REPL is ready (see lib/team.sh). Args are overridable so
 # users can tune autonomy/permissions per provider.
 quintet_provider_launch_cmd() {
     local provider="$1"
+    local no_mcp="${2:-${QUINTET_NO_MCP:-false}}"
+    [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
+
     case "$provider" in
-        claude)      echo "${QUINTET_CLAUDE_LAUNCH:-claude --permission-mode bypassPermissions}" ;;
-        codex)       echo "${QUINTET_CODEX_LAUNCH:-codex --yolo}" ;;
-        agy|gemini)  echo "${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-agy --dangerously-skip-permissions}}" ;;
-        copilot)     echo "${QUINTET_COPILOT_LAUNCH:-copilot --allow-all-tools}" ;;
-        # qwen is a Gemini-CLI fork WITHOUT --skip-trust; --approval-mode yolo auto-
-        # approves tool calls but the workspace stays untrusted, which blocks file
-        # writes. Set the trust env vars so a team worker can actually edit the worktree.
-        qwen)        echo "${QUINTET_QWEN_LAUNCH:-env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo}" ;;
-        opencode)    echo "${QUINTET_OPENCODE_LAUNCH:-opencode --auto}" ;;
-        *)           echo "$(quintet_provider_bin "$provider")" ;;
+        claude)
+            if [[ -n "${QUINTET_CLAUDE_LAUNCH:-}" ]]; then
+                echo "$QUINTET_CLAUDE_LAUNCH"
+            elif [[ "$no_mcp" == "true" ]]; then
+                echo "claude --permission-mode bypassPermissions --strict-mcp-config"
+            else
+                echo "claude --permission-mode bypassPermissions"
+            fi ;;
+        codex)
+            if [[ -n "${QUINTET_CODEX_LAUNCH:-}" ]]; then
+                echo "$QUINTET_CODEX_LAUNCH"
+            elif [[ "$no_mcp" == "true" ]]; then
+                echo "codex --yolo -c mcp_servers={}"
+            else
+                echo "codex --yolo"
+            fi ;;
+        agy|gemini)
+            if [[ -n "${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-}}" ]]; then
+                echo "${QUINTET_AGY_LAUNCH:-$QUINTET_GEMINI_LAUNCH}"
+            else
+                echo "agy --dangerously-skip-permissions"
+            fi ;;
+        copilot)
+            if [[ -n "${QUINTET_COPILOT_LAUNCH:-}" ]]; then
+                echo "$QUINTET_COPILOT_LAUNCH"
+            elif [[ "$no_mcp" == "true" ]]; then
+                echo "copilot --allow-all-tools --disable-builtin-mcps"
+            else
+                echo "copilot --allow-all-tools"
+            fi ;;
+        qwen)
+            if [[ -n "${QUINTET_QWEN_LAUNCH:-}" ]]; then
+                echo "$QUINTET_QWEN_LAUNCH"
+            else
+                echo "env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen --approval-mode yolo"
+            fi ;;
+        opencode)
+            if [[ -n "${QUINTET_OPENCODE_LAUNCH:-}" ]]; then
+                echo "$QUINTET_OPENCODE_LAUNCH"
+            elif [[ "$no_mcp" == "true" ]]; then
+                echo "opencode --pure --auto"
+            else
+                echo "opencode --auto"
+            fi ;;
+        *)
+            echo "$(quintet_provider_bin "$provider")" ;;
     esac
 }
 
