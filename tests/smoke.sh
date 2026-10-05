@@ -1255,6 +1255,19 @@ out=$(q2 "$BIN" team send "bz-$$" w1-claude "busy-marker-23a" 2>&1); rc=$?
 q2 "$BIN" team send "bz-$$" w1-claude "busy-marker-23b" --busy-ok >/dev/null 2>&1; sleep 1
 grep -qx "busy-marker-23b" "$Q2/busy.log" 2>/dev/null && ok "--busy-ok types into a busy pane (2.3)" || bad "--busy-ok types into a busy pane (2.3)"
 q2 "$BIN" team shutdown "bz-$$" --force >/dev/null 2>&1
+
+# 5.1: restart respawns an exited worker and re-sends its kickoff nudge; a live
+# worker is refused without --force. The worker exits on Ctrl-D (EOF), no signals.
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub rs)" "$BIN" team 1:claude "t" --name "rs-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+ttmux send-keys -t "=quintet-rs-$$:=w1-claude" C-d; sleep 1
+d0=$(ttmux display-message -p -t "=quintet-rs-$$:=w1-claude" '#{pane_dead}' 2>/dev/null)
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub rs)" "$BIN" team restart "rs-$$" w1-claude >/dev/null 2>&1; rc=$?
+d1=$(ttmux display-message -p -t "=quintet-rs-$$:=w1-claude" '#{pane_dead}' 2>/dev/null)
+out=$(q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub rs)" "$BIN" team restart "rs-$$" w1-claude 2>&1); rc2=$?
+[[ "$d0" == 1 && $rc -eq 0 && "$d1" == 0 && "$(grep -c '^Read and follow .*/w1-claude.md now\.$' "$Q2/rs.log" 2>/dev/null)" == 2 && $rc2 -ne 0 ]] && echo "$out" | grep -q "still running" \
+    && grep -q "w1-claude RESTARTED" "$Q2/state/teams/rs-$$/taskboard.md" \
+    && ok "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)" || bad "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)"
+q2 "$BIN" team shutdown "rs-$$" --force >/dev/null 2>&1
 rm -rf "$Q2"
 
 rm -rf "$QCWD"

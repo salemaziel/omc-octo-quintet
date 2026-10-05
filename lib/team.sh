@@ -789,6 +789,84 @@ quintet_team_shutdown() {
     fi
 }
 
+# quintet_team_restart <name> <worker> [--force] — respawn one worker from
+# team.json (same provider, model, effort, no-mcp, safe mode and cwd) and point
+# it at its kickoff inbox file again. Refuses a worker whose CLI is still
+# running unless --force; never acts when tmux can't say.
+quintet_team_restart() {
+    local force=false a
+    local -a pos=()
+    for a in "$@"; do
+        case "$a" in
+            --force|-f) force=true ;;
+            -*)         die "team restart: unknown flag: $a" ;;
+            *)          pos+=( "$a" ) ;;
+        esac
+    done
+    local name="${pos[0]:-}" worker="${pos[1]:-}"
+    [[ -n "$name" && -n "$worker" && ${#pos[@]} -eq 2 ]] || die "usage: quintet team restart <name> <worker> [--force]"
+    quintet_validate_team_name "$name"
+    [[ "$worker" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "team restart: invalid worker name '$worker'"
+    quintet_session_exists "$name" || die "team '$name' is not running"
+    quintet_state_guard "$name"
+    have_jq || die "team restart: needs jq to read team.json"
+    local tdir manifest entry; tdir="$(_quintet_team_dir "$name")"; manifest="${tdir}/team.json"
+    [[ -f "$manifest" && ! -L "$manifest" ]] || die "team restart: no team.json for '$name'"
+    entry="$(jq -c --arg w "$worker" '.workers[] | select(.name == $w)' "$manifest" 2>/dev/null)"
+    [[ -n "$entry" ]] || die "team restart: '$worker' is not in team.json for '$name' (see: quintet team status $name)"
+
+    local sess; sess="$(quintet_tmux_session "$name")"
+    case "$(quintet_tmux_liveness "=${sess}:=${worker}")" in
+        alive)   [[ "$force" == true ]] || die "team restart: ${worker} is still running; re-run with --force to replace it" ;;
+        unknown) die "team restart: tmux didn't answer for ${worker}; nothing changed. Retry, or check: tmux ls" ;;
+    esac
+
+    local provider model effort cwd no_mcp safe_mode
+    provider="$(jq -r '.provider' <<< "$entry")"
+    model="$(jq -r '.model // "default"' <<< "$entry")";   [[ "$model" == default ]] && model=""
+    effort="$(jq -r '.effort // "default"' <<< "$entry")"; [[ "$effort" == default ]] && effort=""
+    cwd="$(jq -r '.cwd // empty' <<< "$entry")"
+    [[ -n "$cwd" ]] || cwd="$(jq -r '.cwd // empty' "$manifest")"
+    [[ -d "$cwd" ]] || die "team restart: the team's working dir is gone: ${cwd:-?}"
+    no_mcp="$(jq -r '.no_mcp // false' "$manifest")"
+    safe_mode="$(jq -r '.safe_mode // false' "$manifest")"
+    quintet_provider_validate "$provider"
+
+    local lrc=0; quintet_lock "$name" || lrc=$?
+    [[ $lrc -eq 0 ]] || die "team restart: team '$name' is locked by another quintet process"
+    local envdir
+    envdir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-env.XXXXXX")" || { quintet_unlock "$name"; die "team restart: cannot create env dir"; }
+    chmod 700 "$envdir"
+    # shellcheck disable=SC2064  # expand now
+    trap "rm -rf -- $(printf '%q' "$envdir"); quintet_unlock $(printf '%q' "$name")" EXIT
+    # shellcheck disable=SC2064
+    trap "rm -rf -- $(printf '%q' "$envdir"); quintet_unlock $(printf '%q' "$name"); exit 130" INT TERM
+
+    local envf="${envdir}/${worker}.env"
+    quintet_write_worker_env "$provider" "$envf" || die "team restart: cannot write worker env file"
+    qtmux kill-window -t "=${sess}:=${worker}" 2>/dev/null || true
+    quintet_window_spawn "$name" "$worker" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$effort" "$safe_mode")" "$envf" \
+        || die "team restart: ${worker} failed to start"
+    [[ -L "${tdir}/taskboard.md" ]] || echo "[quintet] ${worker} RESTARTED" >> "${tdir}/taskboard.md"
+
+    local inbox="${cwd%/}/.quintet/inbox/${name}/${worker}.md"
+    if [[ -f "$inbox" && ! -L "$inbox" ]]; then
+        sleep "$(quintet_provider_warmup "$provider")"
+        _quintet_team_kickoff "$name" "$worker" "Read and follow ${inbox} now."
+    else
+        log WARN "${worker}: no kickoff file at ${inbox}; started idle. Give it a task with: quintet team send ${name} ${worker} \"...\""
+    fi
+    local _w
+    for _w in 1 2 3 4 5 6 7 8 9 10; do
+        [[ -e "$envf" ]] || break
+        sleep 0.5
+    done
+    rm -rf -- "$envdir"
+    quintet_unlock "$name"
+    trap - EXIT INT TERM
+    log INFO "restarted ${name}/${worker}"
+}
+
 quintet_team_list() {
     qtmux list-sessions -F '#{session_name}' 2>/dev/null \
         | grep '^quintet-' | sed 's/^quintet-/  • /' || echo "  (no quintet teams running)"

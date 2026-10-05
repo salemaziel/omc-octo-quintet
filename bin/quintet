@@ -40,6 +40,8 @@ TEAM MODE (persistent tmux worker teams):
   quintet team capture  <name> [worker] [lines]
   quintet team send      <name> <worker> "<text>" [--force] [--busy-ok]  # worker = exact name, e.g. w1-claude
   quintet team resume    <name> [worker]   # send kickoff tasks held on a dialog (all if no worker)
+  quintet team restart   <name> <worker> [--force]  # respawn one exited worker from team.json and
+                                                    # re-send its kickoff file; --force replaces a live one
   quintet team shutdown  <name> [--force]
   quintet team list
 
@@ -138,6 +140,7 @@ main() {
                 capture)  shift; quintet_team_capture "$@" ;;
                 send)     shift; quintet_team_send "$@" ;;
                 resume)   shift; quintet_team_resume "$@" ;;
+                restart)  shift; quintet_team_restart "$@" ;;
                 shutdown) shift; quintet_team_shutdown "$@" ;;
                 list)     shift; quintet_team_list ;;
                 ""|--help|-h) usage ;;
