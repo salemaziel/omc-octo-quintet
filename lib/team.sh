@@ -95,8 +95,6 @@ _quintet_team_abort_restore() {
 
 # quintet_team_start <spec> <task> [--cwd dir] [--name name] [--tasks "t1||t2||..."]
 # --tasks lets the caller hand each worker a distinct, pre-decomposed subtask.
-# --trust-cwd lets the kickoff answer Claude's first-run "trust this folder"
-# dialog with Yes (only that exact dialog); without it the task is held.
 quintet_team_start() {
     quintet_tmux_available || die "tmux is not installed (required for team mode): see https://github.com/tmux/tmux"
     local spec="" task="" cwd="$PWD" name="" tasks_blob=""
@@ -106,7 +104,6 @@ quintet_team_start() {
     # (resolved per worker by quintet_resolve_model/_effort, decision 3).
     local model_map="" model_bare="" effort_map="" effort_bare=""
     local safe_mode="${QUINTET_SAFE_MODE:-false}"
-    local trust_cwd="${QUINTET_TRUST_CWD:-false}"
 
     # First two positionals are spec + task; rest are flags.
     [[ $# -ge 1 ]] || die "team start: missing spec (e.g. 2:claude,1:qwen)"
@@ -121,13 +118,11 @@ quintet_team_start() {
             --skip-auth-check)  skip_auth=true; shift ;;
             --no-mcp)           no_mcp=true; shift ;;
             --safe)             safe_mode=true; shift ;;
-            --trust-cwd)        trust_cwd=true; shift ;;
             --model)            need_arg "$1" $#; quintet_parse_cli_value --model "$2" model_map model_bare; shift 2 ;;
             --effort)           need_arg "$1" $#; quintet_parse_cli_value --effort "$2" effort_map effort_bare; shift 2 ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
-    [[ "$trust_cwd" == true ]] || trust_cwd=false
     [[ -n "$spec" ]] || die "team start: missing spec (e.g. 2:claude,1:qwen)"
     [[ -n "$task" ]] || die "team start: missing task description"
     [[ -d "$cwd" ]]  || die "team start: --cwd not a directory: $cwd"
@@ -309,7 +304,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         # Defer task injection: warm up the REPL first, then send only if no
         # first-run dialog is showing (Enter would answer it, e.g. "No, exit").
         ( sleep "$(quintet_provider_warmup "$provider")"
-          _quintet_team_kickoff "$name" "$worker_name" "$provider" "$trust_cwd" "$injected" ) &
+          _quintet_team_kickoff "$name" "$worker_name" "$injected" ) &
         idx=$((idx+1))
     done
 
@@ -334,7 +329,6 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "tmux_socket": %s,\n' "$(json_escape "${QUINTET_TMUX_SOCKET:-default}")"
         printf '  "no_mcp": %s,\n'  "$no_mcp"
         printf '  "safe_mode": %s,\n' "$safe_mode"
-        printf '  "trust_cwd": %s,\n' "$trust_cwd"
         printf '  "started": %s,\n' "$(json_escape "$(now_iso)")"
         printf '  "goal": %s,\n'    "$(json_escape "$task")"
         printf '  "workers": [%s]\n' "$worker_json"
@@ -391,20 +385,6 @@ _quintet_detect_worker_modal() {
     return 1
 }
 
-# _quintet_trust_dialog_selected <capture> <line> — 0 when the capture shows
-# Claude's trust dialog layout ("No, exit" directly above "Yes, I trust this
-# folder", ignoring blank rows) and the ❯ cursor is on <line> ("no" or "yes").
-_quintet_trust_dialog_selected() {
-    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | awk -v want="$2" '
-        prev ~ /^[[:space:]]*(❯[[:space:]]*)?No, exit[[:space:]]*$/ &&
-        $0 ~ /^[[:space:]]*(❯[[:space:]]*)?Yes, I trust this folder[[:space:]]*$/ {
-            n = (prev ~ /❯/); y = ($0 ~ /❯/)
-            if (want == "yes" ? (y && !n) : (n && !y)) found = 1
-        }
-        { prev = $0 }
-        END { exit !found }'
-}
-
 # _quintet_team_hold <team> <worker> <modal> <text> — keep <text> in
 # held/<worker>.txt (0600 in a 0700 dir, written via temp + rename so a planted
 # symlink is replaced, not followed), note it on the taskboard and tell the user
@@ -423,12 +403,10 @@ _quintet_team_hold() {
     log WARN "${worker} HELD: ${modal} on screen, task not sent. Attach: tmux attach -t $(quintet_tmux_session "$team") (answer it), then: quintet team resume ${team} ${worker}"
 }
 
-# _quintet_team_kickoff <team> <worker> <provider> <trust_cwd> <text> — wait for
-# the pane to draw (up to ~20s), then send <text> unless a modal is showing.
-# With trust_cwd, a claude worker on the exact trust dialog gets Down (checked to
-# land on "Yes, I trust this folder") and Enter; anything else is held.
+# _quintet_team_kickoff <team> <worker> <text> — wait for the pane to draw (up
+# to ~20s), then send <text> unless a modal is showing; otherwise hold it.
 _quintet_team_kickoff() {
-    local team="$1" worker="$2" provider="$3" trust_cwd="$4" text="$5" buf modal rc i
+    local team="$1" worker="$2" text="$3" buf modal rc i
     for ((i=0; i<40; i++)); do
         buf="$(quintet_window_capture "$team" "$worker" 40)" && [[ "$buf" == *[![:space:]]* ]] && break
         sleep 0.5
@@ -436,19 +414,6 @@ _quintet_team_kickoff() {
     modal="$(_quintet_detect_worker_modal "$team" "$worker")"; rc=$?
     [[ $rc -eq 1 ]] && { quintet_window_send "$team" "$worker" "$text"; return; }
     [[ $rc -eq 2 ]] && modal="INSPECTION_ERROR"
-    if [[ "$modal" == TRUST_FOLDER && "$trust_cwd" == true && "$provider" == claude ]] \
-        && _quintet_trust_dialog_selected "$(quintet_window_capture "$team" "$worker" 40)" no; then
-        quintet_window_key "$team" "$worker" Down
-        sleep 0.5
-        if _quintet_trust_dialog_selected "$(quintet_window_capture "$team" "$worker" 40)" yes; then
-            log INFO "${worker}: answering the trust dialog with 'Yes, I trust this folder' (--trust-cwd)"
-            quintet_window_key "$team" "$worker" Enter
-            sleep "$(quintet_provider_warmup "$provider")"
-            modal="$(_quintet_detect_worker_modal "$team" "$worker")"; rc=$?
-            [[ $rc -eq 1 ]] && { quintet_window_send "$team" "$worker" "$text"; return; }
-            [[ $rc -eq 2 ]] && modal="INSPECTION_ERROR"
-        fi
-    fi
     _quintet_team_hold "$team" "$worker" "$modal" "$text"
 }
 

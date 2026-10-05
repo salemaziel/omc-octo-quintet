@@ -109,7 +109,6 @@ quintet prune        # prune stale team states & debate archives [--days N] [--d
 | `QUINTET_FLEET_TMUX` | run fleet dispatches in tmux | `true` (when tmux is available) |
 | `QUINTET_NO_MCP` | disable external MCP servers across agents | `false` |
 | `QUINTET_SAFE_MODE` | omit blanket autonomy bypass flags (`bypassPermissions`, `--yolo`, etc.) | `false` |
-| `QUINTET_TRUST_CWD` | same as `--trust-cwd`: answer claude's first-run trust dialog with Yes | `false` |
 | `QUINTET_MODEL` / `QUINTET_<P>_MODEL` | default model override across providers or per-provider | CLI default |
 | `QUINTET_EFFORT` / `QUINTET_<P>_EFFORT` | default reasoning effort level (low/medium/high/max) | CLI default |
 | `QUINTET_SKIP_AUTH_CHECK` | bypass pre-flight auth validation in team mode | `false` |
@@ -125,7 +124,7 @@ quintet prune        # prune stale team states & debate archives [--days N] [--d
 
 ## Team-mode notes
 
-- First run in a new folder: Claude asks "Is this a project you created or one you trust?" before it takes input, and an Enter there picks "No, exit". So the kickoff checks each pane first: if any recognized dialog is up, the worker's task is **held** (saved to `.quintet/teams/<name>/held/<worker>.txt`, noted on the taskboard, WARN on stderr) instead of typed. Answer the dialog (`tmux attach -t quintet-<name>`), then `quintet team resume <name> [worker]`. Pass `--trust-cwd` (or `QUINTET_TRUST_CWD=true`) to have quintet pick "Yes, I trust this folder" for claude workers itself; it only does so on that exact dialog layout, and holds otherwise.
+- First run in a new folder: Claude asks "Is this a project you created or one you trust?" before it takes input, and an Enter there picks "No, exit". So the kickoff checks each pane first: if any recognized dialog is up, the worker's task is **held** (saved to `.quintet/teams/<name>/held/<worker>.txt`, noted on the taskboard, WARN on stderr) instead of typed. Answer the dialog (`tmux attach -t quintet-<name>`), then `quintet team resume <name> [worker]`. quintet never answers this dialog itself: Claude can record the trust on a parent folder (answering it for a folder under `/tmp` trusted all of `/tmp`).
 - `quintet team send` refuses while the worker shows a recognized dialog (its Enter would answer it); add `--force` to answer on purpose.
 - `--safe` workers block on approval prompts. Find them with `quintet team doctor <name>` and answer with `quintet team send <name> <worker> "y" --force`. There is no escalation path yet: nothing pauses a worker and asks the orchestrator for you.
 - Worker names are exact (`w1-claude`, `w2-codex-implementer`). The old `w1` shorthand no longer works; see `quintet team status <name>`.

@@ -34,7 +34,7 @@ quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, Qwen, an
 
 TEAM MODE (persistent tmux worker teams):
   quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||..."] [--safe]
-                               [--trust-cwd] [--model V] [--effort V] [--no-mcp] [--skip-auth-check]
+                               [--model V] [--effort V] [--no-mcp] [--skip-auth-check]
   quintet team status   <name>
   quintet team doctor   <name>      # modal stalls + manifest/window check
   quintet team capture  <name> [worker] [lines]
@@ -47,9 +47,8 @@ TEAM MODE (persistent tmux worker teams):
 
   --safe       drop the autonomy flags; workers then block on approval prompts,
                answer them with: quintet team send <name> <worker> "y" --force
-  --trust-cwd  answer Claude's first-run "trust this folder" dialog with Yes
-               (env QUINTET_TRUST_CWD=true). Without it, a worker showing any
-               dialog at kickoff is HELD: its task is saved, not typed; answer
+  (kickoff)    a worker showing any dialog at kickoff (e.g. Claude's first-run
+               "trust this folder") is HELD: its task is saved, not typed; answer
                the dialog, then run: quintet team resume <name> <worker>
   --force      (send) type even though the worker shows a dialog
   --model/--effort  a bare value (applies to every worker) or provider=value[,provider=value]

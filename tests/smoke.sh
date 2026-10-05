@@ -1000,7 +1000,7 @@ out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUI
     && ok "a die after the backup removes a team dir this start created (A2)" || bad "a die after the backup removes a team dir this start created (A2)"
 rm -rf "$N"
 
-echo "── 14. kickoff holds on trust dialogs, --trust-cwd, resume, send refusal ──"
+echo "── 14. kickoff holds on trust dialogs, resume, send refusal ──"
 # A stub CLI draws Claude's first-run trust dialog (text as captured from a real
 # run) and logs every key it gets: KEY:DOWN / KEY:ENTER / KEY:<c>, then LINE:<text>
 # once trusted. Enter on "No, exit" logs EXIT:NO and quits, like the real one.
@@ -1032,7 +1032,7 @@ erase; printf '> ready\n'
 while IFS= read -r line; do echo "LINE:$line" >> "$log"; done
 STUB
 tx() { ( export HOME="$TR/home" QUINTET_HOME="$TR/home/.quintet" QUINTET_STATE_DIR="$TR/state" TMPDIR="$TR/tmp" QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1
-    unset QUINTET_TRUST_CWD; "$@" ); }
+    "$@" ); }
 
 # No flag: the task is held; the stub never gets a key.
 out=$(tx env QUINTET_CLAUDE_LAUNCH="bash $TR/stub.sh $TR/k1.log" "$BIN" team 1:claude "trust task one" --name "tr1-$$" --skip-auth-check --cwd "$TR/proj" 2>&1)
@@ -1042,7 +1042,6 @@ echo "$out" | grep -q "w1-claude HELD: TRUST_FOLDER" && echo "$out" | grep -qF "
 [[ ! -s "$TR/k1.log" ]] && ok "held worker received no key, no Enter (A1)" || bad "held worker received no key, no Enter (A1) (got: $(tr '\n' ' ' < "$TR/k1.log"))"
 [[ -f "$hf" && "$(stat -c %a "$hf")" == 600 && "$(stat -c %a "${hf%/*}")" == 700 ]] && grep -q "trust task one" "$hf" && ok "held task saved 0600 in a 0700 dir (A1)" || bad "held task saved 0600 in a 0700 dir (A1)"
 grep -qF "[quintet] w1-claude HELD: TRUST_FOLDER" "$TR/state/teams/tr1-$$/taskboard.md" && ok "taskboard notes the held worker (A1)" || bad "taskboard notes the held worker (A1)"
-grep -q '"trust_cwd": false' "$TR/state/teams/tr1-$$/team.json" && ok "manifest records trust_cwd false (A1)" || bad "manifest records trust_cwd false (A1)"
 out=$(tx "$BIN" team status "tr1-$$" 2>&1)
 echo "$out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)" || bad "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)"
 out=$(tx "$BIN" team send "tr1-$$" w1-claude "hello" 2>&1); rc=$?
@@ -1055,18 +1054,6 @@ out=$(tx "$BIN" team resume "tr1-$$" 2>&1); rc=$?; sleep 1
 [[ $rc -eq 0 && ! -e "$hf" ]] && grep -q "^LINE:.*trust task one" "$TR/k1.log" && ok "resume (all held) sends the task once the dialog is answered (A1)" || bad "resume (all held) sends the task once the dialog is answered (A1)"
 tx "$BIN" team shutdown "tr1-$$" --force >/dev/null 2>&1
 
-# --trust-cwd: Down, check the cursor is on Yes, Enter, then the task.
-out=$(tx env QUINTET_CLAUDE_LAUNCH="bash $TR/stub.sh $TR/k2.log" "$BIN" team 1:claude "trust task two" --name "tr2-$$" --skip-auth-check --cwd "$TR/proj" --trust-cwd 2>&1); sleep 1
-[[ "$(sed -n 1p "$TR/k2.log" 2>/dev/null)" == KEY:DOWN && "$(sed -n 2p "$TR/k2.log" 2>/dev/null)" == KEY:ENTER ]] && sed -n 3p "$TR/k2.log" | grep -q "^LINE:.*trust task two" \
-    && ok "--trust-cwd: Down+Enter, then the task arrives (A1)" || bad "--trust-cwd: Down+Enter, then the task arrives (A1) (got: $(tr '\n' ' ' < "$TR/k2.log" 2>/dev/null | cut -c1-80))"
-[[ ! -e "$TR/state/teams/tr2-$$/held/w1-claude.txt" ]] && ! echo "$out" | grep -q HELD && grep -q '"trust_cwd": true' "$TR/state/teams/tr2-$$/team.json" && ok "--trust-cwd: nothing held, manifest records trust_cwd true (A1)" || bad "--trust-cwd: nothing held, manifest records trust_cwd true (A1)"
-tx "$BIN" team shutdown "tr2-$$" --force >/dev/null 2>&1
-
-# --trust-cwd answers only claude: a non-claude worker on the same screen is held.
-out=$(tx env QUINTET_CODEX_LAUNCH="bash $TR/stub.sh $TR/k3.log" "$BIN" team 1:codex "trust task three" --name "tr3-$$" --skip-auth-check --cwd "$TR/proj" --trust-cwd 2>&1)
-[[ ! -s "$TR/k3.log" && -f "$TR/state/teams/tr3-$$/held/w1-codex.txt" ]] && echo "$out" | grep -q "w1-codex HELD: TRUST_FOLDER" && ok "--trust-cwd does not answer a non-claude worker (A1)" || bad "--trust-cwd does not answer a non-claude worker (A1)"
-tx "$BIN" team shutdown "tr3-$$" --force >/dev/null 2>&1
-
 # Old wording is still detected; --force sends anyway.
 tx env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "tr4-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
 tx "$BIN" team send "tr4-$$" w1-claude "printf 'Do you trust this folder? [y/N]: '" >/dev/null 2>&1; sleep 1
@@ -1077,11 +1064,6 @@ tx "$BIN" team send "tr4-$$" w1-claude "echo forced > $TR/forced" --force >/dev/
 [[ "$(cat "$TR/forced" 2>/dev/null)" == forced ]] && ok "send --force types through a modal (A1)" || bad "send --force types through a modal (A1)"
 tx "$BIN" team shutdown "tr4-$$" --force >/dev/null 2>&1
 
-# Layout check: the cursor must be on the asked-for line, with No directly above Yes.
-dlg=$' Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n'
-_quintet_trust_dialog_selected "$dlg" no && ! _quintet_trust_dialog_selected "$dlg" yes && ok "layout check: cursor on 'No, exit' (A1)" || bad "layout check: cursor on 'No, exit' (A1)"
-_quintet_trust_dialog_selected $'   No, exit\n ❯ Yes, I trust this folder\n' yes && ok "layout check: cursor on 'Yes, I trust this folder' (A1)" || bad "layout check: cursor on 'Yes, I trust this folder' (A1)"
-! _quintet_trust_dialog_selected $' ❯ No, exit\n   Maybe\n   Yes, I trust this folder\n' no && ok "layout check: an extra option breaks the match (A1)" || bad "layout check: an extra option breaks the match (A1)"
 rm -rf "$TR"
 
 echo "── 15. tmux -c start directories are not format-expanded ──"
@@ -1092,7 +1074,7 @@ printf '#!/bin/sh\nexit 99\n' > "$H/bin/claude"; chmod +x "$H/bin/claude"
 HSOCK="${QUINTET_TMUX_SOCKET}-hash"; hmark="qpwned$$"
 trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; tmux -L "$ESOCK" kill-server >/dev/null 2>&1; tmux -L "$LSOCK" kill-server >/dev/null 2>&1; tmux -L "$HSOCK" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ESOCK" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$LSOCK" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$HSOCK"' EXIT
 hx() { ( cd "$H/srv" && export PATH="$H/bin:/usr/bin:/bin" HOME="$H/home" QUINTET_HOME="$H/home/.quintet" QUINTET_STATE_DIR="$H/state" TMPDIR="$H/tmp" QUINTET_TMUX_SOCKET="$HSOCK"
-    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_TRUST_CWD; "$@" ); }
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT; "$@" ); }
 hdir="$H/m#(touch $hmark)n #{session_name} x##y tr#"; mkdir -p "$hdir"
 hpwned() { find "$H" "$HOME" "$ROOT" "$PWD" / -maxdepth 1 -name "$hmark" 2>/dev/null | grep -q . || find "$H" -name "$hmark" 2>/dev/null | grep -q .; }
 hx env QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "hash-$$" --skip-auth-check --cwd "$hdir" >/dev/null 2>&1
