@@ -32,8 +32,9 @@ $BIN team 2:codex,1:agy,1:qwen "build the export feature" \
 ```
 
 ```bash
-# 2. Monitor (poll; do not assume success)
+# 2. Monitor & Diagnose (poll; do not assume success)
 $BIN team status export-feat
+$BIN team doctor export-feat            # inspect worker panes & diagnose blocked confirmation modals
 $BIN team capture export-feat            # all workers, last 40 lines each
 $BIN team capture export-feat w1-codex 80
 ```
@@ -48,21 +49,24 @@ $BIN team send export-feat w2-agy "skip the legacy path; focus on v2 API"
 $BIN team shutdown export-feat           # keep state
 $BIN team shutdown export-feat --force   # purge state too
 $BIN team list                           # all running quintet teams
+$BIN prune --days 7                      # garbage-collect dead teams & aged debate logs
 ```
 
 Workers are auto-named `w<idx>-<provider>-<role>` (or `w<idx>-<provider>` for stock); use these exact names for `capture`/`send`.
 
-### Subagent Worker Roles & Extended Spec Syntax
+### Subagent Worker Roles, Models & Extended Spec Syntax
 
-Quintet supports assigning specialized subagent roles using the `N:provider:role` spec syntax:
+Quintet supports assigning specialized subagent roles and target models using the extended spec syntax `N:provider[:role][:model]`:
 
 ```bash
-# Explicit role assignment
-$BIN team 1:codex:implementer,1:agy:code-reviewer,1:claude:security-auditor "build auth feature"
+# Explicit role & model assignment
+$BIN team 1:codex:implementer:o3-mini,1:agy:code-reviewer:gemini-2.5-pro,1:claude:security-auditor:sonnet "build auth feature"
 
-# Mix of specialized roles and stock execution
-$BIN team 1:codex:implementer,1:agy:stock "build and verify"
+# Mix of specialized roles, stock defaults, and custom models
+$BIN team 1:codex:implementer,1:claude::haiku "build and verify" --effort high
 ```
+
+Team and fleet also accept global flags `--model <name>` and `--effort <level>` (or environment overrides `QUINTET_<P>_MODEL`, `QUINTET_<P>_EFFORT`, `QUINTET_MODEL`, `QUINTET_EFFORT`).
 
 Available standard roles (view via `quintet roles`):
 - `implementer`: Direct implementation, scoped file edits, and verification.
@@ -90,6 +94,29 @@ To prevent worker agents from loading extraneous host or global MCP servers that
 
 This maps automatically to provider isolation flags (`--strict-mcp-config` for Claude, `-c mcp_servers={}` for Codex, `--disable-builtin-mcps` for Copilot, `--pure` for OpenCode).
 
+### Tiered Permission & Safety Mode (`--safe`)
+
+By default, team workers launch with unattended autonomy flags (`--permission-mode bypassPermissions` for Claude, `--yolo` for Codex, `--dangerously-skip-permissions` for Agy, `--allow-all-tools` for Copilot, `--approval-mode yolo` for Qwen, `--auto` for OpenCode).
+
+For sensitive repositories, production checkouts, or when confirmation dialogs are preferred:
+- Pass `--safe` to `quintet team`:
+  ```bash
+  $BIN team 1:claude:implementer,1:codex:test-engineer "refactor auth" --safe
+  ```
+- Or set `export QUINTET_SAFE_MODE=true`.
+
+When running in safe mode, run `quintet team doctor <name>` to scan worker panes for any stalled confirmation modals or interactive prompts.
+
+### State Retention & Garbage Collection (`quintet prune`)
+
+To clean up defunct team state directories and expired debate transcripts:
+```bash
+$BIN prune [--days N] [--dry-run] [--force]
+```
+- Scans `QUINTET_STATE_DIR/teams/` for directories whose tmux session has terminated. Active teams are **never** removed.
+- Scans `QUINTET_HOME/debates/` for debate transcripts older than `N` days (default: 7).
+- Pass `--days 0` to immediately prune all dead sessions and aged debate transcripts.
+
 ### The team manifest
 
 `team.json` is the source of truth for a running team — read it to recover state after a disconnect or to script monitoring:
@@ -99,18 +126,20 @@ This maps automatically to provider isolation flags (`--strict-mcp-config` for C
   "name": "export-feat",
   "cwd": "/path/to/repo",
   "session": "quintet-export-feat",
+  "no_mcp": false,
+  "safe_mode": false,
   "started": "2026-05-25T04:30:00Z",
   "goal": "build the export feature",
   "workers": [
-    { "name": "w1-codex-implementer",  "provider": "codex", "role": "implementer" },
-    { "name": "w2-codex-test-engineer", "provider": "codex", "role": "test-engineer" },
-    { "name": "w3-agy-code-reviewer",  "provider": "agy",   "role": "code-reviewer" },
-    { "name": "w4-qwen",               "provider": "qwen",  "role": "stock" }
+    { "name": "w1-codex-implementer",  "provider": "codex", "role": "implementer",   "model": "o3-mini" },
+    { "name": "w2-codex-test-engineer", "provider": "codex", "role": "test-engineer", "model": "default" },
+    { "name": "w3-agy-code-reviewer",  "provider": "agy",   "role": "code-reviewer", "model": "gemini-2.5-pro" },
+    { "name": "w4-qwen",               "provider": "qwen",  "role": "stock",         "model": "default" }
   ]
 }
 ```
 
-Each worker object records `{"name", "provider", "role"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to (`tmux attach -t <session>`).
+Each worker object records `{"name", "provider", "role", "model"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to (`tmux attach -t <session>`).
 
 If a session is orphaned (you lost the terminal), `team list` plus this file is enough to re-attach, capture, or shut it down cleanly.
 

@@ -57,6 +57,19 @@ Fleet dispatches are intended for fast, advisory multi-model reasoning without t
 
 This passes `--strict-mcp-config` to Claude, `-c mcp_servers={}` to Codex, `--disable-builtin-mcps` to Copilot, and `--pure` to OpenCode.
 
+### Model Selection & Reasoning Effort (`--model`, `--effort`)
+
+Override default provider models or reasoning effort in any fleet dispatch:
+- Pass `--model <model>`: `$BIN consult "architecture trade-offs" claude,codex --model o3-mini`
+- Pass `--effort <low|medium|high|xhigh|max>`: `$BIN debate "complex proof" codex,agy --effort high`
+- Or configure per-provider environment variables: `QUINTET_CODEX_MODEL=o3-mini`, `QUINTET_AGY_MODEL=gemini-2.5-pro`, `QUINTET_EFFORT=high`.
+
+### Tiered Safety Mode (`--safe`)
+
+To omit automated bypass permissions or unconstrained execution during fleet dispatches on sensitive repositories:
+- Pass `--safe`: `$BIN review "$(git diff)" claude,agy --safe`
+- Or set environment variable: `export QUINTET_SAFE_MODE=true`
+
 Output arrives under per-provider headers with a status tag:
 
 ```text
