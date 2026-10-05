@@ -758,7 +758,7 @@ out=$(sx env QUINTET_STATE_DIR="$S/l4state" QUINTET_CODEX_LAUNCH='bash --norc' "
 ttmux kill-session -t "=quintet-l4-$$" 2>/dev/null
 ( _quintet_parse_spec "1:codex:stock:-x" ) >/dev/null 2>&1 && bad "spec model '-x' rejected (S-L4)" || ok "spec model '-x' rejected (S-L4)"
 l4ok=true
-for mv in ollama:qwen3 gpt-5.1-codex claude-opus-4@20250101 openrouter/qwen/qwen3-coder o3-mini; do
+for mv in ollama:qwen3 gpt-5.1-codex claude-opus-4@20250101 openrouter/qwen/qwen3-coder o3-mini 'opus[1m]' 'claude-sonnet-4-5[1m]'; do
     ( m=""; b=""; quintet_parse_cli_value --model "$mv" m b; [[ "$b" == "$mv" ]] ) >/dev/null 2>&1 || l4ok=false
 done
 ( m=""; b=""; quintet_parse_cli_value --model "codex=gpt-5.1-codex,claude=sonnet" m b; [[ "$m" == "codex=gpt-5.1-codex,claude=sonnet" ]] ) >/dev/null 2>&1 || l4ok=false
