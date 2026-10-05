@@ -56,6 +56,17 @@ echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
     echo "  ⚠️  tmux not installed — skipping team lifecycle"
 else
+    # Pre-flight auth checks
+    auth_err=$("$BIN" team 1:qwen "fail task" --name "smoke-auth-fail-$$" --cwd /tmp 2>&1 || true)
+    echo "$auth_err" | grep -q "not ready/authenticated" && ok "pre-flight auth rejects unready provider" || bad "pre-flight auth rejects unready provider"
+    tmux has-session -t "quintet-smoke-auth-fail-$$" 2>/dev/null && bad "pre-flight session created on failure" || ok "no session created on auth failure"
+
+    export QUINTET_QWEN_LAUNCH='bash --norc' QUINTET_QWEN_WARMUP=1
+    "$BIN" team 1:qwen "skip auth" --name "smoke-auth-skip-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 || true
+    tmux has-session -t "quintet-smoke-auth-skip-$$" 2>/dev/null && ok "--skip-auth-check permits start" || bad "--skip-auth-check permits start"
+    "$BIN" team shutdown "smoke-auth-skip-$$" --force >/dev/null 2>&1 || true
+    unset QUINTET_QWEN_LAUNCH QUINTET_QWEN_WARMUP
+
     export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"

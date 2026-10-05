@@ -58,15 +58,17 @@ _quintet_parse_spec() {
 # --tasks lets the caller hand each worker a distinct, pre-decomposed subtask.
 quintet_team_start() {
     quintet_tmux_available || die "tmux is not installed (required for team mode): see https://github.com/tmux/tmux"
-    local spec="" task="" cwd="$PWD" name="" tasks_blob=""
+    local spec="" task="" cwd="$PWD" name="" tasks_blob="" skip_auth="${QUINTET_SKIP_AUTH_CHECK:-false}" no_mcp="${QUINTET_NO_MCP:-false}"
     # First two positionals are spec + task; rest are flags.
     spec="$1"; shift
     task="$1"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --cwd)   cwd="$2"; shift 2 ;;
-            --name)  name="$2"; shift 2 ;;
-            --tasks) tasks_blob="$2"; shift 2 ;;
+            --cwd)              cwd="$2"; shift 2 ;;
+            --name)             name="$2"; shift 2 ;;
+            --tasks)            tasks_blob="$2"; shift 2 ;;
+            --skip-auth-check)  skip_auth=true; shift ;;
+            --no-mcp)           no_mcp=true; shift ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
@@ -79,6 +81,20 @@ quintet_team_start() {
     mapfile -t workers < <(_quintet_parse_spec "$spec")
     [[ "${#workers[@]}" -ge 1 ]] || die "team start: spec produced zero workers"
     [[ "${#workers[@]}" -le 10 ]] || die "team start: max 10 workers (got ${#workers[@]})"
+
+    # Pre-flight provider auth and readiness verification
+    if [[ "$skip_auth" != "true" ]]; then
+        local w_entry w_prov custom_launch_var
+        for w_entry in "${workers[@]}"; do
+            w_prov="${w_entry%%:*}"
+            custom_launch_var="QUINTET_$(printf '%s' "$w_prov" | tr '[:lower:]' '[:upper:]')_LAUNCH"
+            if [[ -z "${!custom_launch_var:-}" ]]; then
+                if ! quintet_provider_ready "$w_prov"; then
+                    die "team start: provider '$w_prov' is not ready/authenticated. Run: quintet doctor (or pass --skip-auth-check)"
+                fi
+            fi
+        done
+    fi
 
     [[ -z "$name" ]] && name="$(slugify "$task")"
     [[ -z "$name" ]] && name="team-$(now_epoch)"
