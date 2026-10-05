@@ -516,6 +516,24 @@ for _ in $(seq 1 20); do fleet_sessions >/dev/null || break; sleep 0.25; done
 [[ -z "$(find "$F/tmp" -mindepth 1 -maxdepth 1 -name 'quintet-fleet.*' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no fleet rundir (C-L1)" || bad "SIGINT mid-poll leaves no fleet rundir (C-L1)"
 [[ -z "$(find "$F/tmp" -name 'quintet-err*' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no one-shot errfile (C-L1)" || bad "SIGINT mid-poll leaves no one-shot errfile (C-L1)"
 
+# A3: SIGINT during a --no-tmux fleet kills the one-shots and leaves no run dir,
+# env dir or errfile. The stub runs in its own session and ignores INT, so only
+# the fleet's trap (kill the job tree) can stop it. setsid gives the fleet its own
+# process group, so the group signal hits it like a terminal's Ctrl-C; perl resets
+# the SIGINT disposition that a background child of a non-interactive shell inherits
+# as "ignored", which bash can't trap.
+ff setsid perl -e '$SIG{INT}="DEFAULT"; exec @ARGV' env QUINTET_CLAUDE_ONESHOT_CMD='trap "" INT; setsid sleep 3171' "$BIN" fleet --no-tmux "hi" claude >/dev/null 2>&1 &
+bg=$!
+for _ in $(seq 1 40); do pgrep -f "sleep 317[1]" >/dev/null && break; sleep 0.25; done
+sleep 1
+a3stub="$(pgrep -f 'sleep 317[1]' | head -1)"   # its parent is a fleet subshell, in the fleet's group
+a3pg="$(ps -o pgid= -p "$(ps -o ppid= -p "$a3stub" 2>/dev/null | tr -d ' ')" 2>/dev/null | tr -d ' ')"
+[[ -n "$a3pg" && "$a3pg" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]] && kill -INT -- "-$a3pg" 2>/dev/null
+wait "$bg" 2>/dev/null
+for _ in $(seq 1 20); do pgrep -f "sleep 317[1]" >/dev/null || break; sleep 0.25; done
+pgrep -f "sleep 317[1]" >/dev/null && { pkill -f "sleep 317[1]"; bad "SIGINT in a --no-tmux fleet leaves no stub process (A3)"; } || ok "SIGINT in a --no-tmux fleet leaves no stub process (A3)"
+[[ -z "$(find "$F/tmp" -mindepth 1 -name 'quintet-*' 2>/dev/null)" ]] && ok "SIGINT in a --no-tmux fleet leaves no run dir, env dir or errfile (A3)" || bad "SIGINT in a --no-tmux fleet leaves no run dir, env dir or errfile (A3)"
+
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
 echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"

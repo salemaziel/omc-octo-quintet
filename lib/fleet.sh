@@ -313,6 +313,21 @@ _quintet_fan_out_tmux() {
     return 0
 }
 
+# _quintet_kill_tree <pid> — kill <pid> and its descendants.
+_quintet_kill_tree() {
+    local c
+    for c in $(pgrep -P "$1" 2>/dev/null); do _quintet_kill_tree "$c"; done
+    kill "$1" 2>/dev/null
+}
+
+# _quintet_kill_jobs — kill this shell's background jobs and their descendants
+# (the provider CLI runs a level or two below each job), then reap them.
+_quintet_kill_jobs() {
+    local j
+    for j in $(jobs -p); do _quintet_kill_tree "$j"; done
+    wait 2>/dev/null
+}
+
 # Fan out a prompt to a set of providers in parallel. Echoes a results dir path.
 # Providers are resolved by the caller (in its own shell, so errors exit nonzero);
 # provider-list-string is only scanned for embedded --flags.
@@ -379,11 +394,24 @@ ${prompt}"
     fi
 
     if [[ "$ran_tmux" == "false" ]]; then
+        # On INT/TERM kill the one-shot subshells (and the CLIs under them) and
+        # remove the run dir, which also holds their env dirs and errfiles
+        # (_q_errdir). A normal exit keeps the run dir for the caller to render.
+        # Prior traps are restored only outside a subshell, as in the tmux path (C-L2).
+        local prev_traps="" cleanup
+        [[ "$BASH_SUBSHELL" -eq 0 ]] && prev_traps="$(trap -p EXIT INT TERM)"
+        cleanup="_quintet_kill_jobs; rm -rf -- $(printf '%q' "$rundir")"
+        # shellcheck disable=SC2064  # expand rundir now
+        trap "$cleanup" EXIT
+        # shellcheck disable=SC2064
+        trap "$cleanup; exit 130" INT TERM
         for p in "${providers[@]}"; do
             log INFO "dispatching → $(quintet_provider_emoji "$p") $p"
             _quintet_fleet_one "$p" "$prompt" "${rundir}/${p}.out" "$no_mcp" &
         done
         wait
+        trap - EXIT INT TERM
+        [[ -n "$prev_traps" ]] && eval "$prev_traps"
     fi
 
     # Apply fallback for any provider that failed transiently.
