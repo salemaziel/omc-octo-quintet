@@ -778,7 +778,8 @@ cx() { ( export PATH="$C/bin:/usr/bin:/bin" HOME="$C/home" QUINTET_HOME="$C/home
 # C-M1: a worker whose CLI exited is reported, and doctor counts it.
 cx env QUINTET_CLAUDE_LAUNCH='echo exiting-now; exit 3' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "ex-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
 sleep 1
-sout=$(cx "$BIN" team status "ex-$$" 2>&1)
+sout=$(cx "$BIN" team status "ex-$$" 2>&1); src=$?
+[[ $src -eq 1 ]] && ok "team status returns 1 with an exited worker (A2)" || bad "team status returns 1 with an exited worker (A2) (rc $src)"
 echo "$sout" | grep -q "w1-claude.*EXITED (status 3)" && ok "team status reports an exited worker as EXITED (status 3) (C-M1)" || bad "team status reports an exited worker as EXITED (status 3) (C-M1)"
 dout=$(cx "$BIN" team doctor "ex-$$" 2>&1); drc=$?
 [[ $drc -ne 0 ]] && echo "$dout" | grep -q "Worker 'w1-claude' EXITED (status 3)" && ok "team doctor counts an exited worker as an issue, nonzero (C-M1)" || bad "team doctor counts an exited worker as an issue, nonzero (C-M1)"
@@ -788,6 +789,7 @@ cx "$BIN" team shutdown "ex-$$" --force >/dev/null 2>&1
 bound=$( ( export QUINTET_MODEL_CLI=m1; unset QUINTET_MODEL_MAP; _quintet_bind_bare_cli "1:codex:implementer,1:codex:reviewer" codex; echo "${QUINTET_MODEL_MAP:-}" ) 2>/dev/null)
 [[ "$bound" == "codex=m1" ]] && ok "bare --model with a duplicated provider binds to it (C-M2)" || bad "bare --model with a duplicated provider binds to it (C-M2)"
 out=$(cx "$BIN" fleet "hi" "1:codex:implementer,1:codex:reviewer" 2>&1)
+echo "$out" | grep -q "dropping duplicate provider entry '1:codex:reviewer'" && ok "fleet WARNs about the deduped provider entry (A2)" || bad "fleet WARNs about the deduped provider entry (A2)"
 [[ "$(echo "$out" | grep -c "codex   \[0:ok\]")" -eq 1 ]] && ! echo "$out" | grep -q "fallback for codex" && ! echo "$out" | grep -q "cannot create tmux window" && ok "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)" || bad "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)"
 
 # C-M3: zero started workers -> nonzero, no session, no team dir, no lock.
@@ -828,7 +830,7 @@ echo "── 13. worker terminal, env allowlist, one-shot env, env values, escap
 N="$(mktemp -d)"; mkdir -p "$N/home/.codex" "$N/home/.claude" "$N/tmp" "$N/state" "$N/bin" "$N/stub" "$N/codexhome" "$N/envd"
 touch "$N/home/.codex/auth.json" "$N/home/.claude/.credentials.json"; chmod 700 "$N/envd"
 printf '#!/bin/sh\necho "stub $(basename "$0") must not run" >&2\nexit 99\n' > "$N/bin/codex"; cp "$N/bin/codex" "$N/bin/claude"; chmod +x "$N/bin/codex" "$N/bin/claude"
-printf '#!/bin/bash\ncase " $* " in *" new-window "*) [ -n "$QUINTET_TEST_FAIL_WIN" ] && case " $* " in *" -n $QUINTET_TEST_FAIL_WIN "*) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v tmux)" > "$N/stub/tmux"; chmod +x "$N/stub/tmux"
+printf '#!/bin/bash\ncase " $* " in *" new-window "*) [ -n "$QUINTET_TEST_FAIL_WIN" ] && case " $* " in *" -n $QUINTET_TEST_FAIL_WIN "*) exit 1 ;; esac ;; esac\ncase " $* " in *" new-session "*) [ -n "$QUINTET_TEST_FAIL_SESSION" ] && exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v tmux)" > "$N/stub/tmux"; chmod +x "$N/stub/tmux"
 nx() { ( export PATH="$N/bin:/usr/bin:/bin" HOME="$N/home" QUINTET_HOME="$N/home/.quintet" QUINTET_STATE_DIR="$N/state" TMPDIR="$N/tmp"
     unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_MODEL_CLI QUINTET_MODEL_MAP QUINTET_EFFORT_CLI QUINTET_EFFORT_MAP \
         QUINTET_CLAUDE_MODEL QUINTET_CODEX_MODEL QUINTET_CLAUDE_EFFORT QUINTET_CODEX_EFFORT; "$@" ); }
@@ -899,6 +901,16 @@ nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINT
 [[ "$(cat "$KD/notes.md" 2>/dev/null)" == keep && ! -e "$KD/taskboard.md" && ! -e "$N/state/locks/kept-$$.lock" ]] && ! ttmux has-session -t "=quintet-kept-$$" 2>/dev/null \
     && ok "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)" || bad "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)"
 ttmux kill-session -t "=quintet-kept-$$" 2>/dev/null
+
+# A2: a die after the taskboard backup (tmux session creation fails) puts the
+# prior taskboard back, drops the temp files and releases the lock.
+echo prior-board2 > "$KD/taskboard.md"
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 && "$(cat "$KD/taskboard.md" 2>/dev/null)" == prior-board2 && "$(cat "$KD/notes.md" 2>/dev/null)" == keep && -z "$(find "$KD" -name '.taskboard*' 2>/dev/null)" && ! -e "$N/state/locks/kept-$$.lock" ]] \
+    && ok "a die after the backup restores the prior taskboard and releases the lock (A2)" || bad "a die after the backup restores the prior taskboard and releases the lock (A2)"
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "fresh-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 && ! -e "$N/state/teams/fresh-$$" && ! -e "$N/state/locks/fresh-$$.lock" ]] \
+    && ok "a die after the backup removes a team dir this start created (A2)" || bad "a die after the backup removes a team dir this start created (A2)"
 rm -rf "$N"
 
 echo "── 14. kickoff holds on trust dialogs, --trust-cwd, resume, send refusal ──"

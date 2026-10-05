@@ -106,7 +106,10 @@ _quintet_resolve_providers() {
         for p in $arg; do
             [[ "$p" == --* ]] && continue
             p_clean="$(_quintet_token_provider "$p")"
-            [[ -n "${seen[$p_clean]:-}" ]] && continue
+            if [[ -n "${seen[$p_clean]:-}" ]]; then
+                log WARN "fleet: dropping duplicate provider entry '$p' (already have $p_clean)"
+                continue
+            fi
             seen[$p_clean]=1
             candidates+=( "$p_clean" )
         done

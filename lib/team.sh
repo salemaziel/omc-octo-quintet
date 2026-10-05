@@ -75,6 +75,24 @@ _quintet_parse_spec() {
     done
 }
 
+# _quintet_team_abort_restore — undo this start's state changes. Runs from the
+# EXIT/INT/TERM traps of quintet_team_start (the locals are gone by then, so it
+# reads the _QT_* globals) until the start is committed. Removes the whole team
+# dir if this start created it, else puts the prior taskboard.md back (R-L2).
+# Disarms itself, so a second call (INT then EXIT) does nothing.
+_quintet_team_abort_restore() {
+    [[ -n "${_QT_TDIR:-}" ]] || return 0
+    local tdir="$_QT_TDIR" new="$_QT_NEW" board="$_QT_BOARD" prev="$_QT_PREV"
+    _QT_TDIR=""
+    if [[ "$new" == true ]]; then
+        quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams" || log WARN "team start: could not remove $tdir"
+    elif [[ -n "$prev" ]]; then
+        _quintet_rename "$prev" "$board" || log WARN "team start: could not restore $board"
+    elif [[ "${_QT_WROTE:-false}" == true ]]; then
+        rm -f -- "$board"
+    fi
+}
+
 # quintet_team_start <spec> <task> [--cwd dir] [--name name] [--tasks "t1||t2||..."]
 # --tasks lets the caller hand each worker a distinct, pre-decomposed subtask.
 # --trust-cwd lets the kickoff answer Claude's first-run "trust this folder"
@@ -187,6 +205,14 @@ quintet_team_start() {
     # A zero-worker failure removes the team dir only if this start created it;
     # otherwise it restores the prior taskboard.md (R-L2).
     local tdir_new=false; [[ -e "$tdir" || -L "$tdir" ]] || tdir_new=true
+    # Armed from here until the start commits: any die/INT/TERM runs
+    # _quintet_team_abort_restore through the traps below.
+    _QT_TDIR="$tdir" _QT_NEW="$tdir_new" _QT_BOARD="${tdir}/taskboard.md" _QT_PREV="" _QT_WROTE=false
+    local abort_cmd="_quintet_team_abort_restore"
+    # shellcheck disable=SC2064  # expand now
+    trap "$abort_cmd; $unlock_cmd" EXIT
+    # shellcheck disable=SC2064
+    trap "$abort_cmd; $unlock_cmd; exit 130" INT TERM
     ensure_dir "$tdir"
     quintet_state_guard "$name"
     # State files are written to a temp file in the team dir and renamed into
@@ -197,6 +223,7 @@ quintet_team_start() {
     if [[ "$tdir_new" == false && -f "$board" && ! -L "$board" ]]; then
         board_prev="$(mktemp "${tdir}/.taskboard.prev.XXXXXX")" && cp -p -- "$board" "$board_prev" \
             || die "team start: cannot back up ${board}"
+        _QT_PREV="$board_prev"
     fi
     board_tmp="$(mktemp "${tdir}/.taskboard.XXXXXX")" || die "team start: cannot write ${board}"
     {
@@ -209,6 +236,7 @@ quintet_team_start() {
         echo "## Workers"
     } > "$board_tmp"
     _quintet_rename "$board_tmp" "$board" || { rm -f -- "$board_tmp"; die "team start: cannot write ${board}"; }
+    _QT_WROTE=true
 
     # Build manifest header.
     local manifest="${tdir}/team.json"
@@ -219,9 +247,9 @@ quintet_team_start() {
     envdir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-env.XXXXXX")" || die "team start: cannot create env dir"
     chmod 700 "$envdir"
     # shellcheck disable=SC2064  # expand envdir now; the local is gone at EXIT
-    trap "rm -rf -- $(printf '%q' "$envdir"); $unlock_cmd" EXIT
+    trap "rm -rf -- $(printf '%q' "$envdir"); $abort_cmd; $unlock_cmd" EXIT
     # shellcheck disable=SC2064
-    trap "rm -rf -- $(printf '%q' "$envdir"); $unlock_cmd; exit 130" INT TERM
+    trap "rm -rf -- $(printf '%q' "$envdir"); $abort_cmd; $unlock_cmd; exit 130" INT TERM
     quintet_session_create "$name" "$cwd"
 
     local worker_entry provider rem role model effort mcp_eff worker_name wtask role_prompt
@@ -284,20 +312,14 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
     done
 
     # Zero workers started: don't leave a leader-only session behind (C-M3).
-    # The EXIT trap removes the env dir and releases the lock. Only what this
-    # start wrote is removed: the whole team dir if it created it, else just its
-    # taskboard.md (the prior one is put back). team.json isn't written yet (R-L2).
+    # The EXIT trap restores the prior taskboard (or removes the team dir this
+    # start created), removes the env dir and releases the lock. team.json isn't
+    # written yet (R-L2).
     if [[ $started -eq 0 ]]; then
         quintet_session_kill "$name"
-        if [[ "$tdir_new" == true ]]; then
-            quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams" || log WARN "team start: could not remove $tdir"
-        elif [[ -n "$board_prev" ]]; then
-            _quintet_rename "$board_prev" "$board" || log WARN "team start: could not restore $board"
-        else
-            rm -f -- "$board"
-        fi
         die "team start: none of the ${#workers[@]} worker(s) started; session and this start's team state removed"
     fi
+    _QT_TDIR=""   # committed: the traps no longer restore
     [[ -z "$board_prev" ]] || rm -f -- "$board_prev"
 
     local manifest_tmp
@@ -491,11 +513,14 @@ quintet_team_status() {
     [[ -f "${tdir}/team.json" ]] && have_jq && \
         echo "Goal: $(jq -r '.goal' "${tdir}/team.json")"
     echo "Workers:"
-    local w cmd modal rc dst
+    local w cmd modal rc dst bad=0
+    local -a windows=()
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
+        windows+=( "$w" )
         if dst="$(quintet_window_dead_status "$name" "$w")"; then
             printf '  • %-18s ❌ EXITED (status %s)\n' "$w" "$dst"
+            bad=1
             continue
         fi
         cmd="$(quintet_window_command "$name" "$w")"
@@ -508,10 +533,19 @@ quintet_team_status() {
             printf '  • %-18s running: %s\n' "$w" "${cmd:-idle}"
         fi
     done < <(quintet_window_list "$name")
+    # A manifest worker with no window is missing (same rule as doctor).
+    local expected e
+    if expected="$(_quintet_manifest_workers "$name")"; then
+        while IFS= read -r e; do
+            [[ -z "$e" ]] && continue
+            printf '%s\n' "${windows[@]}" | grep -Fxq -- "$e" || { bad=1; printf '  • %-18s ❌ MISSING (in team.json, no window)\n' "$e"; }
+        done <<< "$expected"
+    fi
     if [[ -f "${tdir}/taskboard.md" ]]; then
         echo "Taskboard tail:"
         tail -8 "${tdir}/taskboard.md" | sed 's/^/    /'
     fi
+    return "$bad"
 }
 
 quintet_team_doctor() {
