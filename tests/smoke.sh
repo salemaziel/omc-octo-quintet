@@ -346,10 +346,12 @@ r=$(QUINTET_CODEX_EFFORT=env quintet_resolve_effort codex "codex=high" ""); [[ "
 team_x() { ( export PATH="$X/bin:$PATH" HOME="$X/home" QUINTET_HOME="$X/home/.quintet" QUINTET_STATE_DIR="$X/state" \
     QUINTET_TEST_STUBLOG="$X/log" QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1; "$@" ); }
 mj() { cat "$X/state/teams/$1/team.json" 2>/dev/null; }
-team_x "$BIN" team 1:claude "t" --name "inj-$$" --skip-auth-check --cwd /tmp --safe --model "ok; touch $X/INJECTED" >/dev/null 2>&1
+team_x "$BIN" team 1:claude "t" --name "inj-$$" --skip-auth-check --cwd /tmp --safe --model "ok; touch $X/INJECTED" >/dev/null 2>&1; rc=$?
 sleep 1
 [[ ! -e "$X/INJECTED" ]] && ok "model 'ok; touch …' not executed (C1)" || bad "model 'ok; touch …' not executed (C1)"
-argv_has claude --model "ok; touch $X/INJECTED" && ok "injected model reached claude as one argv value" || bad "injected model reached claude as one argv value"
+# Since S-L4 such a value is rejected up front; argv escaping of odd values is
+# covered by the quintet_provider_launch_cmd cases above.
+[[ $rc -eq 1 ]] && ! ttmux has-session -t "=quintet-inj-$$" 2>/dev/null && ok "team rejects model 'ok; touch …' before launch (S-L4)" || bad "team rejects model 'ok; touch …' before launch (S-L4)"
 team_x "$BIN" team shutdown "inj-$$" >/dev/null 2>&1
 rm -f "$X/log/"*.argv
 team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex:stock:spec "t" --name "spec-$$" --skip-auth-check --cwd /tmp --effort codex=high --no-mcp >/dev/null 2>&1
@@ -476,8 +478,9 @@ out=$(pr --days 1 2>&1)
 out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "fleet-1-2-3" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "reserved for fleet" && ok "team name in fleet namespace rejected" || bad "team name in fleet namespace rejected"
 
-# M3 (plan 4.7): orphaned fleet sessions older than 60 min are swept (test socket only).
-now_s=$(date +%s); fold="quintet-fleet-$((now_s - 7200))-1-1"; fnew="quintet-fleet-${now_s}-1-2"
+# M3 (plan 4.7): orphaned fleet sessions older than 60 min (owner pid dead) are swept (test socket only).
+( exit 0 ) & fdead=$!; wait "$fdead"
+now_s=$(date +%s); fold="quintet-fleet-$((now_s - 7200))-${fdead}-1"; fnew="quintet-fleet-${now_s}-${fdead}-2"
 ttmux new-session -d -s "$fold" sleep 600; ttmux new-session -d -s "$fnew" sleep 600
 out=$(pr --dry-run 2>&1)
 ttmux has-session -t "=$fold" 2>/dev/null && echo "$out" | grep -q "Candidate orphaned fleet session: $fold" && ok "dry-run lists old fleet session, keeps it" || bad "dry-run lists old fleet session, keeps it"
@@ -516,9 +519,11 @@ out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$B
 echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
 
 # A6 / A5: a worker that dies without a .status is detected early (remain-on-exit).
-# The kill only runs inside a tmux pane (its own process group), never in this shell.
+# The kill only runs inside a tmux pane (its own process group), never in this
+# shell's group (workers start under env -i, so TMUX_PANE can't be the guard).
 t0=$(date +%s)
-out=$(ff env QUINTET_TIMEOUT=20 QUINTET_CLAUDE_ONESHOT_CMD='[ -n "$TMUX_PANE" ] && kill -KILL 0; exit 1' "$BIN" fleet "hi" claude 2>&1)
+smoke_pgid="$(ps -o pgid= -p $$ | tr -d ' ')"
+out=$(ff env QUINTET_TIMEOUT=20 QUINTET_TEST_SMOKE_PGID="$smoke_pgid" QUINTET_CLAUDE_ONESHOT_CMD='[ "$(ps -o pgid= -p $$ | tr -d " ")" != "$QUINTET_TEST_SMOKE_PGID" ] && kill -KILL 0; exit 1' "$BIN" fleet "hi" claude 2>&1)
 el=$(( $(date +%s) - t0 ))
 [[ $el -lt 12 ]] && echo "$out" | grep -q "worker-crashed" && ok "crashed fleet worker detected early (${el}s, A6)" || bad "crashed fleet worker detected early (${el}s, A6)"
 echo "$out" | grep -qF "$(quintet_provider_emoji codex) codex (fallback for claude)" && ok "fallback runs after a crashed worker" || bad "fallback runs after a crashed worker"
@@ -650,6 +655,114 @@ if command -v shellcheck >/dev/null 2>&1; then
     [[ -z "$(shellcheck -S warning "$BIN" "$ROOT"/lib/*.sh 2>&1)" ]] && ok "shellcheck -S warning: zero findings" || bad "shellcheck -S warning: zero findings"
 fi
 rm -rf "$Z"
+
+echo "── 11. state-path symlinks, worker env isolation, locks, values ──"
+# Sandbox only: every path below lives under one mktemp parent ($S), HOME is fake,
+# PATH has stub CLIs + /usr/bin:/bin (no real provider CLI), tmux uses private sockets.
+S="$(mktemp -d)"; mkdir -p "$S/home/.claude" "$S/tmp" "$S/bin" "$S/srvhome"; touch "$S/home/.claude/.credentials.json"
+printf '#!/bin/sh\necho "stub $(basename "$0") must not run" >&2\nexit 99\n' > "$S/bin/codex"; cp "$S/bin/codex" "$S/bin/claude"; chmod +x "$S/bin/codex" "$S/bin/claude"
+LSOCK="${QUINTET_TMUX_SOCKET}-leak"
+trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; tmux -L "$ESOCK" kill-server >/dev/null 2>&1; tmux -L "$LSOCK" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ESOCK" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$LSOCK"' EXIT
+sx() { ( export PATH="$S/bin:/usr/bin:/bin" HOME="$S/home" QUINTET_HOME="$S/home/.quintet" TMPDIR="$S/tmp"
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT; "$@" ); }
+
+# S-H1: prune never follows a symlinked teams/ (the reported repro), state dir or debates/.
+mkdir -p "$S/h1/important-repo" "$S/h1/notes" "$S/h1/evil/.quintet"
+echo keep > "$S/h1/important-repo/file"; echo keep > "$S/h1/notes/n"
+ln -s ../.. "$S/h1/evil/.quintet/teams"
+out=$(cd "$S/h1/evil" && sx env QUINTET_STATE_DIR="$S/h1/evil/.quintet" "$BIN" prune --days 0 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$S/h1/important-repo/file" && -f "$S/h1/notes/n" ]] && echo "$out" | grep -q "symlink" && ok "prune refuses symlinked .quintet/teams -> ../.. (S-H1)" || bad "prune refuses symlinked .quintet/teams -> ../.. (S-H1)"
+mkdir -p "$S/h1/victimstate/teams/vteam" "$S/h1/s2"; echo keep > "$S/h1/victimstate/teams/vteam/f"; ln -s "$S/h1/victimstate" "$S/h1/s2/.quintet"
+out=$(sx env QUINTET_STATE_DIR="$S/h1/s2/.quintet" "$BIN" prune --days 0 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$S/h1/victimstate/teams/vteam/f" ]] && ok "prune refuses a symlinked QUINTET_STATE_DIR (S-H1)" || bad "prune refuses a symlinked QUINTET_STATE_DIR (S-H1)"
+mkdir -p "$S/h1/victimdeb/d1" "$S/h1/dhome" "$S/h1/dstate"; echo keep > "$S/h1/victimdeb/d1/f"; ln -s "$S/h1/victimdeb" "$S/h1/dhome/debates"
+out=$(sx env QUINTET_STATE_DIR="$S/h1/dstate" QUINTET_HOME="$S/h1/dhome" "$BIN" prune --days 0 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$S/h1/victimdeb/d1/f" ]] && ok "prune refuses a symlinked debates/ (S-H1)" || bad "prune refuses a symlinked debates/ (S-H1)"
+mkdir -p "$S/h1/st3/teams" "$S/h1/victim3"; echo keep > "$S/h1/victim3/f"; ln -s "$S/h1/victim3" "$S/h1/st3/teams/lnk"
+out=$(sx env QUINTET_STATE_DIR="$S/h1/st3" "$BIN" prune --days 0 2>&1)
+[[ -L "$S/h1/st3/teams/lnk" && -f "$S/h1/victim3/f" ]] && echo "$out" | grep -q "skipping 'lnk' (symlink" && ok "prune skips a symlinked team entry with a WARN (S-H1)" || bad "prune skips a symlinked team entry with a WARN (S-H1)"
+mkdir -p "$S/h1/sd/.quintet" "$S/h1/sdtarget/vteam"; echo keep > "$S/h1/sdtarget/vteam/f"; ln -s "$S/h1/sdtarget" "$S/h1/sd/.quintet/teams"
+out=$(sx env QUINTET_STATE_DIR="$S/h1/sd/.quintet" "$BIN" team shutdown vteam --force 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$S/h1/sdtarget/vteam/f" ]] && echo "$out" | grep -q "symlink" && ok "shutdown --force refuses a symlinked teams/ (S-H1)" || bad "shutdown --force refuses a symlinked teams/ (S-H1)"
+mkdir -p "$S/h1/sd2/teams" "$S/h1/t2target"; echo keep > "$S/h1/t2target/f"; ln -s "$S/h1/t2target" "$S/h1/sd2/teams/t2"
+out=$(sx env QUINTET_STATE_DIR="$S/h1/sd2" "$BIN" team shutdown t2 --force 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$S/h1/t2target/f" ]] && echo "$out" | grep -q "symlink" && ok "shutdown --force refuses a symlinked team dir (S-H1)" || bad "shutdown --force refuses a symlinked team dir (S-H1)"
+mkdir -p "$S/h1/b/x" "$S/h1/a"
+[[ "$( ( source "$ROOT/lib/common.sh"; quintet_safe_rm_dir "$S/h1/a/../b/x" "$S/h1/a"; echo "rc=$?" ) 2>/dev/null)" == "rc=1" && -d "$S/h1/b/x" ]] && ok "safe rm refuses a dir not directly under the base (S-H1)" || bad "safe rm refuses a dir not directly under the base (S-H1)"
+
+# S-M2: team start never writes through pre-placed state-file symlinks or a symlinked team dir.
+mkdir -p "$S/m2/state/teams/smt-$$"; echo original > "$S/m2/victim-board"; echo original > "$S/m2/victim-json"
+ln -s "$S/m2/victim-board" "$S/m2/state/teams/smt-$$/taskboard.md"; ln -s "$S/m2/victim-json" "$S/m2/state/teams/smt-$$/team.json"
+sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "smt-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+[[ "$(cat "$S/m2/victim-board")" == original && "$(cat "$S/m2/victim-json")" == original ]] && ok "team start does not write through taskboard.md/team.json symlinks (S-M2)" || bad "team start does not write through taskboard.md/team.json symlinks (S-M2)"
+[[ ! -L "$S/m2/state/teams/smt-$$/taskboard.md" && ! -L "$S/m2/state/teams/smt-$$/team.json" ]] && grep -q "quintet team: smt-$$" "$S/m2/state/teams/smt-$$/taskboard.md" && ok "state files replaced by real files (S-M2)" || bad "state files replaced by real files (S-M2)"
+sx env QUINTET_STATE_DIR="$S/m2/state" "$BIN" team shutdown "smt-$$" --force >/dev/null 2>&1
+mkdir -p "$S/m2/dtarget"; ln -s "$S/m2/dtarget" "$S/m2/state/teams/smd-$$"
+out=$(sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "smd-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 && -z "$(ls -A "$S/m2/dtarget")" ]] && echo "$out" | grep -q "symlink" && ! ttmux has-session -t "=quintet-smd-$$" 2>/dev/null && ok "team start refuses a symlinked team dir (S-M2)" || bad "team start refuses a symlinked team dir (S-M2)"
+ttmux kill-session -t "=quintet-smd-$$" 2>/dev/null
+
+# S-M1: a tmux server started from a normal shell (not env -i) carries a var in
+# its global env; workers must not see it. Dummy values only; never printed.
+probe2="qprobe2-$$-val"; lmark="$S/leak-marker.txt"
+( export NOT_ALLOWED_PROBE="$probe2" HOME="$S/srvhome"; tmux -L "$LSOCK" new-session -d -s keepalive -c "$S" sleep 3600 )
+sx env -u NOT_ALLOWED_PROBE QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/m1state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 \
+    LC_PAPER=C "$BIN" team 1:claude "t" --name "leak-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+QUINTET_TMUX_SOCKET="$LSOCK" "$BIN" team send "leak-$$" "w1-claude" \
+    "echo \"other=\${NOT_ALLOWED_PROBE:+set} lc=\${LC_PAPER:+set} term=\${TERM:+set}\" > $lmark" >/dev/null 2>&1
+sleep 1.5
+[[ "$(cat "$lmark" 2>/dev/null)" == "other= "* ]] && ok "team worker does not inherit the tmux server's global env (S-M1)" || bad "team worker does not inherit the tmux server's global env (S-M1) (got '$(cut -d' ' -f1 "$lmark" 2>/dev/null)')"
+grep -q "lc=set" "$lmark" 2>/dev/null && ok "worker env carries LC_* from the caller (S-M1)" || bad "worker env carries LC_* from the caller (S-M1)"
+sx env QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/m1state" "$BIN" team shutdown "leak-$$" --force >/dev/null 2>&1
+fout=$(sx env -u NOT_ALLOWED_PROBE QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_CLAUDE_ONESHOT_CMD='echo "fleetleak other=${NOT_ALLOWED_PROBE:+set}"' \
+    "$BIN" fleet "hi" claude 2>/dev/null)
+echo "$fout" | grep -q "fleetleak other=$" && ok "fleet worker does not inherit the tmux server's global env (S-M1)" || bad "fleet worker does not inherit the tmux server's global env (S-M1)"
+tmux -L "$LSOCK" kill-server >/dev/null 2>&1
+
+# S-L1: atomic lock with pid; stale/pid-less .break and empty lock dirs don't block forever.
+LK="$S/lk"; mkdir -p "$LK/locks"
+( exit 0 ) & ldead=$!; wait "$ldead"
+lk_try() { ( export QUINTET_STATE_DIR="$LK"; source "$ROOT/lib/common.sh"; quintet_lock "$1" ) 2>/dev/null; }
+mkdir -p "$LK/locks/a.lock" "$LK/locks/a.lock.break"; echo "$ldead" > "$LK/locks/a.lock/pid"; echo "$ldead" > "$LK/locks/a.lock.break/pid"
+lk_try a && [[ "$(cat "$LK/locks/a.lock/pid")" == "$$" && ! -e "$LK/locks/a.lock.break" ]] && ok "leftover .break with a dead pid is broken (S-L1)" || bad "leftover .break with a dead pid is broken (S-L1)"
+mkdir -p "$LK/locks/c.lock" "$LK/locks/c.lock.break"; echo "$ldead" > "$LK/locks/c.lock/pid"
+lk_try c && [[ "$(cat "$LK/locks/c.lock/pid")" == "$$" ]] && ok "pid-less leftover .break does not block (S-L1)" || bad "pid-less leftover .break does not block (S-L1)"
+mkdir -p "$LK/locks/b.lock"
+lk_try b && [[ "$(cat "$LK/locks/b.lock/pid")" == "$$" ]] && ok "empty pid-less lock dir does not block (S-L1)" || bad "empty pid-less lock dir does not block (S-L1)"
+[[ -z "$(find "$LK/locks" -name '*.tmp.*' 2>/dev/null)" ]] && ok "no lock temp dirs left behind (S-L1)" || bad "no lock temp dirs left behind (S-L1)"
+sleep 60 & lklive=$!
+mkdir -p "$LK/locks/d.lock" "$LK/teams/d"; echo "$lklive" > "$LK/locks/d.lock/pid"; echo '{}' > "$LK/teams/d/team.json"
+out=$(sx env QUINTET_STATE_DIR="$LK" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name d --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -qF "rm -rf -- $LK/locks/d.lock" && ok "'locked' error prints the manual cleanup path (S-L1)" || bad "'locked' error prints the manual cleanup path (S-L1)"
+out=$(sx env QUINTET_STATE_DIR="$LK" "$BIN" prune --days 0 2>&1)
+[[ -d "$LK/teams/d" ]] && echo "$out" | grep -qF "rm -rf -- $LK/locks/d.lock" && ok "prune 'locked' WARN prints the manual cleanup path (S-L1)" || bad "prune 'locked' WARN prints the manual cleanup path (S-L1)"
+kill "$lklive" 2>/dev/null; wait "$lklive" 2>/dev/null
+
+# S-L2: an old fleet session whose owner pid is alive is not swept.
+sleep 600 & fown=$!
+fl_live="quintet-fleet-$(( $(date +%s) - 7200 ))-${fown}-9"
+ttmux new-session -d -s "$fl_live" sleep 600
+sx env QUINTET_STATE_DIR="$S/l2state" "$BIN" prune >/dev/null 2>&1
+ttmux has-session -t "=$fl_live" 2>/dev/null && ok "old fleet session with a live owner pid kept (S-L2)" || bad "old fleet session with a live owner pid kept (S-L2)"
+ttmux kill-session -t "=$fl_live" 2>/dev/null
+kill "$fown" 2>/dev/null; wait "$fown" 2>/dev/null
+
+# S-L4: model/effort values that could act as flags are rejected (CLI and spec);
+# legitimate names keep working.
+out=$(sx env QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet --no-tmux "hi" codex --model "--dangerously-skip-permissions" 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid value" && ! echo "$out" | grep -q "must-not-run" && ok "fleet --model '--dangerously-…' rejected (S-L4)" || bad "fleet --model '--dangerously-…' rejected (S-L4)"
+out=$(sx env QUINTET_STATE_DIR="$S/l4state" QUINTET_CODEX_LAUNCH='bash --norc' "$BIN" team 1:codex "t" --name "l4-$$" --skip-auth-check --cwd /tmp --effort codex=-x 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid value" && ! ttmux has-session -t "=quintet-l4-$$" 2>/dev/null && ok "team --effort codex=-x rejected (S-L4)" || bad "team --effort codex=-x rejected (S-L4)"
+ttmux kill-session -t "=quintet-l4-$$" 2>/dev/null
+( _quintet_parse_spec "1:codex:stock:-x" ) >/dev/null 2>&1 && bad "spec model '-x' rejected (S-L4)" || ok "spec model '-x' rejected (S-L4)"
+l4ok=true
+for mv in ollama:qwen3 gpt-5.1-codex claude-opus-4@20250101 openrouter/qwen/qwen3-coder o3-mini; do
+    ( m=""; b=""; quintet_parse_cli_value --model "$mv" m b; [[ "$b" == "$mv" ]] ) >/dev/null 2>&1 || l4ok=false
+done
+( m=""; b=""; quintet_parse_cli_value --model "codex=gpt-5.1-codex,claude=sonnet" m b; [[ "$m" == "codex=gpt-5.1-codex,claude=sonnet" ]] ) >/dev/null 2>&1 || l4ok=false
+[[ "$(_quintet_parse_spec "1:codex:stock:gpt-5.1-codex" 2>/dev/null)" == "codex:stock:gpt-5.1-codex" ]] || l4ok=false
+$l4ok && ok "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)" || bad "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)"
+rm -rf "$S"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"

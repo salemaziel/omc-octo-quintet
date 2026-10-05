@@ -65,6 +65,7 @@ _quintet_parse_spec() {
         quintet_provider_validate "$provider"
         role="$(quintet_normalize_role "$role")"
         quintet_role_exists "$role" || die "unknown role: '$role' in '$tok'"
+        [[ -z "$model" ]] || quintet_validate_model_value "model in '$tok'" "$model"
 
         if [[ -n "$model" ]]; then
             for ((i=0; i<n; i++)); do echo "${provider}:${role}:${model}"; done
@@ -140,10 +141,12 @@ quintet_team_start() {
     # quintet-fleet-<epoch>-<pid>-<n> is the fleet session namespace (prune kills old ones).
     [[ "$name" =~ ^fleet-[0-9]+-[0-9]+-[0-9]+$ ]] && die "team name '$name' is reserved for fleet sessions"
 
+    # Never write through a symlinked state dir, teams/, locks/ or team dir (S-M2).
+    quintet_state_guard "$name"
     # Hold the team lock from the liveness check until the session exists, so a
     # concurrent prune can't delete this team's state in between. The EXIT trap
     # releases it on every die path below.
-    quintet_lock "$name" || die "team start: team '$name' is locked by another quintet process (start or prune in progress)"
+    quintet_lock "$name" || die "team start: team '$name' is locked by another quintet process (start or prune in progress). If none is running, remove the lock: rm -rf -- $(printf '%q' "$(quintet_lock_path "$name")")"
     local unlock_cmd; unlock_cmd="quintet_unlock $(printf '%q' "$name")"
     # shellcheck disable=SC2064  # expand name now
     trap "$unlock_cmd" EXIT
@@ -166,7 +169,12 @@ quintet_team_start() {
 
     local tdir; tdir="$(_quintet_team_dir "$name")"
     ensure_dir "$tdir"
-    local board="${tdir}/taskboard.md"
+    quintet_state_guard "$name"
+    # State files are written to a temp file in the team dir and renamed into
+    # place, so a pre-placed taskboard.md / team.json symlink is replaced, never
+    # written through (S-M2).
+    local board="${tdir}/taskboard.md" board_tmp
+    board_tmp="$(mktemp "${tdir}/.taskboard.XXXXXX")" || die "team start: cannot write ${board}"
     {
         echo "# quintet team: $name"
         echo "_started $(now_iso) — cwd: ${cwd}_"
@@ -175,7 +183,8 @@ quintet_team_start() {
         echo "$task"
         echo
         echo "## Workers"
-    } > "$board"
+    } > "$board_tmp"
+    _quintet_rename "$board_tmp" "$board" || { rm -f -- "$board_tmp"; die "team start: cannot write ${board}"; }
 
     # Build manifest header.
     local manifest="${tdir}/team.json"
@@ -248,6 +257,8 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         idx=$((idx+1))
     done
 
+    local manifest_tmp
+    manifest_tmp="$(mktemp "${tdir}/.team.json.XXXXXX")" || die "team start: cannot write ${manifest}"
     {
         printf '{\n'
         printf '  "name": %s,\n'    "$(json_escape "$name")"
@@ -259,7 +270,8 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "goal": %s,\n'    "$(json_escape "$task")"
         printf '  "workers": [%s]\n' "$worker_json"
         printf '}\n'
-    } > "$manifest"
+    } > "$manifest_tmp"
+    _quintet_rename "$manifest_tmp" "$manifest" || { rm -f -- "$manifest_tmp"; die "team start: cannot write ${manifest}"; }
 
     wait   # let deferred task injections finish before returning
     # Workers delete their env file on start; give slow starters a moment, then
@@ -437,12 +449,20 @@ quintet_team_shutdown() {
     local name="${1:-}" force="${2:-}"
     [[ -n "$name" ]] || die "team shutdown: missing team name"
     quintet_validate_team_name "$name"
+    local purge=false
+    if [[ "$force" == "--force" || "$force" == "-f" ]]; then
+        purge=true
+        quintet_state_guard "$name"   # never rm through a symlinked state path (S-H1)
+    fi
     if ! quintet_session_exists "$name"; then
         log WARN "team '$name' has no live session; cleaning state only"
     fi
     quintet_session_kill "$name"
-    if [[ "$force" == "--force" || "$force" == "-f" ]]; then
-        rm -rf "$(_quintet_team_dir "$name")" 2>/dev/null || true
+    if [[ "$purge" == "true" ]]; then
+        local tdir; tdir="$(_quintet_team_dir "$name")"
+        if [[ -e "$tdir" ]] && ! quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams"; then
+            die "team '$name' shut down, but state not purged: $tdir is not a removable team dir (must be a real, user-owned dir directly under ${QUINTET_STATE_DIR%/}/teams)"
+        fi
         log INFO "team '$name' shut down and state purged"
     else
         log INFO "team '$name' shut down (state kept under $(_quintet_team_dir "$name"))"

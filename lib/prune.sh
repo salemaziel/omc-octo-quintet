@@ -14,7 +14,11 @@
 #      a WARN and a manual cleanup command. ${QUINTET_HOME}/teams is skipped with
 #      a WARN (nothing writes there; no lock covers it).
 #   3. Scans ${QUINTET_HOME}/debates/ for archives older than N days.
-#   4. Kills orphaned quintet-fleet-<epoch>-* sessions older than 60 minutes.
+#   4. Kills orphaned quintet-fleet-<epoch>-<pid>-* sessions older than 60
+#      minutes whose owner pid is dead.
+#   State dirs are never followed through symlinks: a symlinked state dir,
+#   teams/, locks/ or debates/ makes prune die; a symlinked entry is skipped; rm
+#   only removes real, user-owned dirs directly under the resolved base.
 #   Age = inactivity: newest mtime of the dir and its regular files. Unknown
 #   timestamps are skipped with a WARN, never treated as old.
 #   Flags: --days N (default 7), --dry-run (report candidates only).
@@ -72,6 +76,10 @@ quintet_prune() {
     done
 
     quintet_tmux_available || die "prune: tmux unavailable; cannot verify team liveness (nothing deleted)"
+    # Never follow a symlinked state dir, teams/, locks/ or debates/ (S-H1).
+    quintet_state_guard
+    local debate_base="${QUINTET_HOME:-$HOME/.quintet}/debates"
+    quintet_refuse_symlink "$debate_base" "debate dir"
     local inventory
     inventory="$(_quintet_session_inventory)" || die "prune: cannot read tmux session inventory (nothing deleted)"
 
@@ -88,15 +96,19 @@ quintet_prune() {
     local tdir tname mtime age
     if [[ -d "${QUINTET_STATE_DIR}/teams" ]]; then
         for tdir in "${QUINTET_STATE_DIR}/teams"/*; do
-            [[ -d "$tdir" ]] || continue
             tname="$(basename "$tdir")"
+            if [[ -L "$tdir" ]]; then
+                log WARN "prune: skipping '$tname' (symlink, not followed). Remove the link manually if stale: rm -- $(printf '%q' "$tdir")"
+                continue
+            fi
+            [[ -d "$tdir" ]] || continue
             if ! ( quintet_validate_team_name "$tname" ) 2>/dev/null; then
                 log WARN "prune: skipping '$tname' (not a valid team name). Remove manually if stale: rm -rf -- $(printf '%q' "$tdir")"
                 continue
             fi
             grep -qxF -- "quintet-${tname}" <<< "$inventory" && continue
             if ! quintet_lock "$tname"; then
-                log WARN "prune: skipping '$tname' (locked by another quintet process)"
+                log WARN "prune: skipping '$tname' (locked by another quintet process; if none is running, remove the lock: rm -rf -- $(printf '%q' "$(quintet_lock_path "$tname")"))"
                 continue
             fi
             # Re-check liveness under the lock: the team may have started since
@@ -114,7 +126,7 @@ quintet_prune() {
                 if [[ "$dry_run" == "true" ]]; then
                     echo "  • Candidate dead team state: $tname (idle: $((age / 86400))d)"
                     teams_n=$((teams_n + 1))
-                elif rm -rf -- "$tdir" 2>/dev/null && [[ ! -e "$tdir" ]]; then
+                elif quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR}/teams"; then
                     echo "  • Removed dead team state: $tname (idle: $((age / 86400))d)"
                     teams_n=$((teams_n + 1))
                 else
@@ -127,12 +139,15 @@ quintet_prune() {
     fi
 
     # 2. Aged debate archives.
-    local debate_base="${QUINTET_HOME:-$HOME/.quintet}/debates"
     local ddir dname
     if [[ -d "$debate_base" ]]; then
         for ddir in "${debate_base}"/*; do
-            [[ -d "$ddir" ]] || continue
             dname="$(basename "$ddir")"
+            if [[ -L "$ddir" ]]; then
+                log WARN "prune: skipping debate '$dname' (symlink, not followed)"
+                continue
+            fi
+            [[ -d "$ddir" ]] || continue
             if ! mtime="$(_quintet_latest_activity_epoch "$ddir")"; then
                 log WARN "prune: skipping debate '$dname' (unknown timestamp)"
                 continue
@@ -142,7 +157,7 @@ quintet_prune() {
                 if [[ "$dry_run" == "true" ]]; then
                     echo "  • Candidate debate archive: $dname (idle: $((age / 86400))d)"
                     debates_n=$((debates_n + 1))
-                elif rm -rf -- "$ddir" 2>/dev/null && [[ ! -e "$ddir" ]]; then
+                elif quintet_safe_rm_dir "$ddir" "$debate_base"; then
                     echo "  • Removed debate archive: $dname (idle: $((age / 86400))d)"
                     debates_n=$((debates_n + 1))
                 else
@@ -153,12 +168,15 @@ quintet_prune() {
         done
     fi
 
-    # 3. Orphaned fleet sessions (Ctrl-C'd / crashed fleet runs) older than 60 min.
-    local s ep
+    # 3. Orphaned fleet sessions (Ctrl-C'd / crashed fleet runs): older than 60 min
+    # AND the owner pid embedded in the name is gone, so a live long-running or
+    # QUINTET_FLEET_KEEP_SESSION fleet is never killed (S-L2).
+    local s ep opid
     while IFS= read -r s; do
-        [[ "$s" =~ ^quintet-fleet-([0-9]+)-[0-9]+-[0-9]+$ ]] || continue
-        ep="${BASH_REMATCH[1]}"
+        [[ "$s" =~ ^quintet-fleet-([0-9]+)-([0-9]+)-[0-9]+$ ]] || continue
+        ep="${BASH_REMATCH[1]}"; opid="${BASH_REMATCH[2]}"
         (( now - 10#$ep > 3600 )) || continue
+        kill -0 "$opid" 2>/dev/null && continue
         if [[ "$dry_run" == "true" ]]; then
             echo "  • Candidate orphaned fleet session: $s"
             fleets_n=$((fleets_n + 1))

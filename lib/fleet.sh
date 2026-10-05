@@ -208,9 +208,11 @@ _quintet_fan_out_tmux() {
         qtmux new-window -d -t "=$sess" -n "$p" -c "$PWD" sleep 86400 \
             && qtmux set-option -w -t "=${sess}:=${p}" remain-on-exit on >/dev/null \
             || { log ERROR "fleet: cannot create tmux window for $p"; continue; }
+        # env -i: the worker sees only the env file, not the tmux server's
+        # global environment (S-M1).
         # shellcheck disable=SC2016  # $1/$@ expand in the worker's bash
         qtmux respawn-pane -k -t "=${sess}:=${p}" -c "$PWD" \
-            bash -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
+            env -i "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
             quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp" \
             || { log ERROR "fleet: cannot start worker for $p"; qtmux kill-window -t "=${sess}:=${p}" 2>/dev/null; }
     done

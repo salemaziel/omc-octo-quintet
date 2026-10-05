@@ -37,9 +37,11 @@ quintet_session_create() {
 }
 
 # Spawn one worker window. Args: team worker-name cwd "launch-command" env-file
-# The window runs (argv form, no shell parsing by tmux) a bash that sources the
-# worker's 0600 env file, deletes it, then execs the launch command. Secrets
-# never appear in tmux/bash argv (A4, A13). remain-on-exit keeps a crashed
+# The window runs (argv form, no shell parsing by tmux) `env -i bash` that
+# sources the worker's 0600 env file, deletes it, then execs the launch command.
+# The worker's environment is only what the env file holds: nothing leaks in
+# from the tmux server's global environment (S-M1). Secrets never appear in
+# tmux/bash argv (A4, A13). remain-on-exit keeps a crashed
 # worker's output inspectable. It's a window option, so the window starts on a
 # placeholder, gets remain-on-exit, and only then respawn-pane -k swaps in the
 # worker: a CLI that exits at once can't close the window before the option is set.
@@ -50,7 +52,7 @@ quintet_window_spawn() {
     qtmux set-option -w -t "=${sess}:=${worker}" remain-on-exit on >/dev/null 2>&1 || true
     # shellcheck disable=SC2016  # $1/$2 expand in the worker's bash, not here
     qtmux respawn-pane -k -t "=${sess}:=${worker}" -c "$cwd" \
-        bash -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; exec bash -c "$2"' \
+        env -i "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; exec bash -c "$2"' \
         quintet-worker "$envf" "$launch" \
         || { log ERROR "tmux: failed to start worker $worker"; qtmux kill-window -t "=${sess}:=${worker}" 2>/dev/null; return 1; }
 }

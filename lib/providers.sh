@@ -94,14 +94,16 @@ quintet_provider_env_vars() {
     fi
 }
 
-# Env var names every worker gets regardless of provider (QUINTET_* is matched
-# by prefix in quintet_write_worker_env).
-QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR XDG_DATA_HOME XDG_CONFIG_HOME
+# Env var names every worker gets regardless of provider (QUINTET_*, LC_* and
+# XDG_* are matched by prefix in quintet_write_worker_env). Workers start from an
+# empty environment (env -i), so this also carries what an interactive CLI needs:
+# terminal, locale, user identity, shell, timezone.
+QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR TERM COLORTERM LANG USER LOGNAME SHELL TZ
     HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy)
 
 # quintet_write_worker_env <provider> <file>
 # Writes the caller's exported, allowlisted vars (common + provider's list +
-# QUINTET_*) to <file> as `declare -x NAME=<%q value>` lines, mode 0600.
+# QUINTET_* / LC_* / XDG_*) to <file> as `declare -x NAME=<%q value>` lines, mode 0600.
 # The file's dir must already be 0700. Values are never echoed or logged.
 quintet_write_worker_env() {
     local provider="$1" file="$2" v
@@ -112,7 +114,7 @@ quintet_write_worker_env() {
         umask 077
         : > "$file" || exit 1
         while IFS= read -r v; do
-            [[ -n "${allow[$v]:-}" || "$v" == QUINTET_* ]] || continue
+            [[ -n "${allow[$v]:-}" || "$v" == QUINTET_* || "$v" == LC_* || "$v" == XDG_* ]] || continue
             printf 'declare -x %s=%q\n' "$v" "${!v}"
         done < <(compgen -e) > "$file"
     )
@@ -230,9 +232,18 @@ _quintet_cli_map_get() {
     return 0
 }
 
+# quintet_validate_model_value <what> <value> — die unless <value> looks like a
+# model/effort name. A leading '-' would reach the CLI as an extra flag
+# (e.g. --model --dangerously-skip-permissions), so values must start with a
+# letter or digit (S-L4).
+quintet_validate_model_value() {
+    [[ "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._/@+:=-]*$ ]] \
+        || die "$1: invalid value '$2' (must match ^[A-Za-z0-9][A-Za-z0-9._/@+:=-]*\$)"
+}
+
 # quintet_parse_cli_value <flag> <value> <map_var> <bare_var>
 # --model/--effort accept a bare value or "provider=value[,provider=value]".
-# Stores into the named variables (map or bare); dies on a malformed map.
+# Stores into the named variables (map or bare); dies on a malformed map or value.
 quintet_parse_cli_value() {
     local flag="$1" val="$2" item p
     local -n _qpc_map="$3" _qpc_bare="$4"
@@ -243,9 +254,11 @@ quintet_parse_cli_value() {
             p="${item%%=*}"
             [[ "$item" == *=?* ]] || die "$flag: bad entry '$item' (use provider=value[,provider=value])"
             quintet_provider_validate "$p"
+            quintet_validate_model_value "$flag" "${item#*=}"
         done
         _qpc_map="${_qpc_map:+${_qpc_map},}${val}"
     else
+        quintet_validate_model_value "$flag" "$val"
         _qpc_bare="$val"
     fi
 }

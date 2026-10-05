@@ -60,36 +60,106 @@ quintet_validate_team_name() {
         || die "invalid team name '${1:-}': must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\$ (letter/digit first, then letters, digits, '_' or '-'; max 64 chars)"
 }
 
+# ── State dir safety ───────────────────────────────────────────────────────────
+# State paths are never followed through symlinks: a pre-placed symlink (e.g. a
+# cloned repo's .quintet/teams -> ../..) would otherwise make prune or shutdown
+# rm -rf outside the state dir, or make team start write through to other files.
+
+# quintet_refuse_symlink <path> <what> — die if <path> is a symlink.
+quintet_refuse_symlink() {
+    [[ -L "${1%/}" ]] && die "refusing to use $2 '${1%/}': it is a symlink (remove it, or point QUINTET_STATE_DIR / QUINTET_HOME at a real directory)"
+    return 0
+}
+
+# quintet_state_guard [team] — die if QUINTET_STATE_DIR, its teams/ or locks/,
+# or the team's dir is a symlink.
+# shellcheck disable=SC2120  # team.sh passes the team name; other callers don't
+quintet_state_guard() {
+    local s="${QUINTET_STATE_DIR%/}"
+    quintet_refuse_symlink "$s" "QUINTET_STATE_DIR"
+    quintet_refuse_symlink "$s/teams" "state dir"
+    quintet_refuse_symlink "$s/locks" "lock dir"
+    [[ -n "${1:-}" ]] && quintet_refuse_symlink "$s/teams/$1" "team dir"
+    return 0
+}
+
+# quintet_safe_rm_dir <dir> <base> — rm -rf <dir> only when it is a real
+# (non-symlink) directory owned by this user whose resolved path is directly
+# under the resolved <base> (itself not a symlink). Returns 1 without removing
+# anything otherwise, or when rm fails.
+quintet_safe_rm_dir() {
+    local d="${1%/}" base="${2%/}" rd rb
+    [[ -d "$d" && ! -L "$d" && -O "$d" && -d "$base" && ! -L "$base" ]] || return 1
+    rd="$(cd -P -- "$d" 2>/dev/null && pwd -P)" || return 1
+    rb="$(cd -P -- "$base" 2>/dev/null && pwd -P)" || return 1
+    [[ "${rd%/*}" == "$rb" && "$rd" != "$rb" ]] || return 1
+    rm -rf -- "$rd" 2>/dev/null && [[ ! -e "$rd" ]]
+}
+
 # ── Team locks ─────────────────────────────────────────────────────────────────
-# quintet_lock <team> — atomic mkdir lock ${QUINTET_STATE_DIR}/locks/<team>.lock
-# holding the owner's pid. Serializes team creation and prune per team.
+# quintet_lock <team> — lock dir ${QUINTET_STATE_DIR}/locks/<team>.lock holding
+# the owner's pid. Serializes team creation and prune per team.
+# The lock appears atomically with its pid: the pid is written into a temp dir
+# that is then renamed into place, so a pid-less lock is never created (rename
+# fails if a non-empty lock exists; an empty leftover dir is replaced).
 # A lock is stale only when its pid is dead (kill -0 fails); there is no age-based
-# breaking, and a lock with no readable pid yet counts as held. Breaking takes a
-# second mkdir mutex (<team>.lock.break) so two breakers can't both win: rm the
-# stale lock, retry mkdir once. Returns 1 if the lock is held (or can't be made).
+# breaking. Breaking takes a second lock (<team>.lock.break, made the same way,
+# with its own pid) so two breakers can't both win: rm the stale lock, retry once.
+# A .break dir whose pid is dead is itself stale and is removed. Returns 1 if the
+# lock is held (or can't be made). Dies if a state path is a symlink.
+quintet_lock_path() { echo "${QUINTET_STATE_DIR%/}/locks/$1.lock"; }
+
+# _quintet_rename <src> <dst> — rename(2) <src> to <dst>: never follows a <dst>
+# symlink (the link itself is replaced); fails if <dst> is a non-empty dir.
+# GNU mv -T, else python3 os.rename.
+_quintet_rename() {
+    if mv --help 2>&1 | grep -q -- '--no-target-directory'; then
+        mv -T -- "$1" "$2" 2>/dev/null
+    else
+        python3 -c 'import os,sys; os.rename(sys.argv[1], sys.argv[2])' "$1" "$2" 2>/dev/null
+    fi
+}
+
+# _quintet_lock_take <lockdir> — create <lockdir> containing pid=$$, atomically.
+_quintet_lock_take() {
+    local tmp
+    tmp="$(mktemp -d "${1}.tmp.XXXXXX" 2>/dev/null)" || return 1
+    if echo "$$" > "${tmp}/pid" && _quintet_rename "$tmp" "$1"; then return 0; fi
+    rm -rf -- "$tmp"
+    return 1
+}
+
 quintet_lock() {
-    local dir="${QUINTET_STATE_DIR}/locks" lk pid
-    lk="${dir}/$1.lock"
+    local dir lk pid bpid
+    quintet_state_guard
+    dir="${QUINTET_STATE_DIR%/}/locks"; lk="$(quintet_lock_path "$1")"
     mkdir -p "$dir" 2>/dev/null || return 1
-    if mkdir "$lk" 2>/dev/null; then echo "$$" > "${lk}/pid"; return 0; fi
+    _quintet_lock_take "$lk" && return 0
     pid="$(cat "${lk}/pid" 2>/dev/null)"
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     kill -0 "$pid" 2>/dev/null && return 1
-    mkdir "${lk}.break" 2>/dev/null || return 1
+    if ! _quintet_lock_take "${lk}.break"; then
+        bpid="$(cat "${lk}.break/pid" 2>/dev/null)"
+        [[ "$bpid" =~ ^[0-9]+$ ]] || return 1
+        kill -0 "$bpid" 2>/dev/null && return 1
+        log WARN "removing stale lock-break dir for '$1' (pid $bpid is gone)"
+        rm -rf -- "${lk}.break"
+        _quintet_lock_take "${lk}.break" || return 1
+    fi
     if [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$pid" ]]; then
         log WARN "breaking stale lock for '$1' (pid $pid is gone)"
         rm -rf -- "$lk"
     fi
-    if mkdir "$lk" 2>/dev/null; then
-        echo "$$" > "${lk}/pid"; rmdir "${lk}.break" 2>/dev/null; return 0
+    if _quintet_lock_take "$lk"; then
+        rm -rf -- "${lk}.break"; return 0
     fi
-    rmdir "${lk}.break" 2>/dev/null
+    rm -rf -- "${lk}.break"
     return 1
 }
 
 # quintet_unlock <team> — release a lock this process holds (no-op otherwise).
 quintet_unlock() {
-    local lk="${QUINTET_STATE_DIR}/locks/$1.lock"
+    local lk; lk="$(quintet_lock_path "$1")"
     [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$$" ]] && rm -rf -- "$lk"
     return 0
 }
