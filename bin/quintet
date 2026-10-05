@@ -8,7 +8,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
-QUINTET_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+_quintet_src="${BASH_SOURCE[0]}"
+while [ -h "$_quintet_src" ]; do
+    _quintet_dir="$(cd -P "$(dirname "$_quintet_src")" >/dev/null 2>&1 && pwd)"
+    _quintet_src="$(readlink "$_quintet_src")"
+    [[ "$_quintet_src" != /* ]] && _quintet_src="${_quintet_dir}/${_quintet_src}"
+done
+QUINTET_ROOT="$(cd -P "$(dirname "$_quintet_src")/.." >/dev/null 2>&1 && pwd)"
 export QUINTET_ROOT
 # shellcheck source=/dev/null
 source "${QUINTET_ROOT}/lib/common.sh"

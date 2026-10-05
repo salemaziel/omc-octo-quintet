@@ -162,8 +162,9 @@ _quintet_fan_out_tmux() {
 
     # Poll status files for completion
     local timeout="${QUINTET_TIMEOUT:-300}"
+    local max_iters=$((timeout * 2))
     local elapsed=0 all_done
-    while [[ $elapsed -lt $timeout ]]; do
+    while [[ $elapsed -lt $max_iters ]]; do
         all_done=true
         for p in "${providers[@]}"; do
             if [[ ! -f "${rundir}/${p}.out.status" ]]; then

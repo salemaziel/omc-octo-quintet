@@ -87,12 +87,9 @@ quintet_team_start() {
         die "team '$name' already running. Use: quintet team status $name (or shutdown $name --force)"
     fi
 
-    # Optional pre-decomposed per-worker subtasks (split on '||').
+    # Optional pre-decomposed per-worker subtasks (split on literal '||').
     local -a subtasks=()
     if [[ -n "$tasks_blob" ]]; then
-        IFS='|' read -ra _raw <<< "${tasks_blob//||/$'\x1f'}"
-        # Above is fragile across shells; do an explicit split on the literal '||'.
-        subtasks=()
         local rest="$tasks_blob"
         while [[ "$rest" == *"||"* ]]; do
             subtasks+=( "${rest%%||*}" ); rest="${rest#*||}"
