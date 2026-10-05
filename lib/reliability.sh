@@ -11,6 +11,7 @@ _Q_PSTATE="${QUINTET_HOME}/provider-state"
 QUINTET_CB_FAILURE_THRESHOLD="${QUINTET_CB_FAILURE_THRESHOLD:-3}"  # transient fails before opening
 QUINTET_CB_COOLDOWN_SECS="${QUINTET_CB_COOLDOWN_SECS:-300}"        # 5 min cooldown
 QUINTET_CB_FAILURE_WINDOW_SECS="${QUINTET_CB_FAILURE_WINDOW_SECS:-900}"  # only count fails this recent (15 min)
+QUINTET_QUOTA_TTL_SECS="${QUINTET_QUOTA_TTL_SECS:-3600}"           # skip a provider out of quota for 1 h
 
 # _quintet_classify_text <lowercased text> -> "transient" | "permanent" | "" (no match).
 # Status codes count only next to http/status/error/code or their reason phrase,
@@ -63,10 +64,28 @@ record_failure() {
     echo "$class"
 }
 
-# record_success <provider> — clears failure state and any open breaker.
+# record_success <provider> — clears failure state, any open breaker and a quota mark.
 record_success() {
     local provider="$1"
-    rm -f "${_Q_PSTATE}/${provider}.failures" "${_Q_PSTATE}/${provider}.cooldown" 2>/dev/null || true
+    rm -f "${_Q_PSTATE}/${provider}.failures" "${_Q_PSTATE}/${provider}.cooldown" "${_Q_PSTATE}/${provider}.quota" 2>/dev/null || true
+}
+
+# quota_mark <provider> — the provider reported its quota is used up; skip it
+# for QUINTET_QUOTA_TTL_SECS. Separate from the breaker (doesn't count as a failure).
+quota_mark() {
+    ensure_dir "$_Q_PSTATE"
+    now_epoch > "${_Q_PSTATE}/$1.quota"
+}
+
+# quota_blocked <provider> -> 0 while a quota mark is younger than the TTL;
+# prints the epoch it expires at.
+quota_blocked() {
+    local f="${_Q_PSTATE}/$1.quota" at
+    [[ -f "$f" ]] || return 1
+    at=$(cat "$f" 2>/dev/null); [[ "$at" =~ ^[0-9]+$ ]] || return 1
+    at=$(( at + QUINTET_QUOTA_TTL_SECS ))
+    (( $(now_epoch) < at )) || return 1
+    echo "$at"
 }
 
 # circuit_open <provider> -> 0 if the breaker is currently open (provider should be skipped).
@@ -90,6 +109,7 @@ pick_fallback() {
         [[ "$c" == "$failed" ]] && continue
         quintet_provider_ready "$c" || continue
         circuit_open "$c" && continue
+        quota_blocked "$c" >/dev/null && continue
         echo "$c"; return 0
     done
     return 1

@@ -500,7 +500,7 @@ F="$(mktemp -d)"; mkdir -p "$F/bin" "$F/home/.codex" "$F/home/.claude" "$F/tmp" 
 printf '#!/bin/bash\n[ -n "$QUINTET_TEST_STUB_FAIL" ] && exit 1\n[ -n "$QUINTET_TEST_SLEEP" ] && sleep "$QUINTET_TEST_SLEEP"\necho "stub codex answer"\n' > "$F/bin/codex"
 printf '#!/bin/bash\necho "stub claude answer"\n' > "$F/bin/claude"; chmod +x "$F/bin/"*
 ff() { ( export PATH="$F/bin:/usr/bin:/bin" HOME="$F/home" QUINTET_HOME="$F/home/.quintet" TMPDIR="$F/tmp"
-    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_TIMEOUT QUINTET_CLAUDE_TIMEOUT QUINTET_CODEX_TIMEOUT
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_TIMEOUT QUINTET_CLAUDE_TIMEOUT QUINTET_CODEX_TIMEOUT QUINTET_DEADLINE_SECS QUINTET_DEADLINE_AT
     "$@" ); }
 fleet_sessions() { ttmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^quintet-fleet-'; }
 
@@ -595,9 +595,31 @@ el=$(( $(date +%s) - t0 )); wait
 pkill -x -f 'sleep 31'
 [[ $el -lt 15 ]] && echo "$out" | grep -q "claude worker exited without a result" && ok "tmux server gone mid-fleet: seat crashed early (${el}s, 3.1)" || bad "tmux server gone mid-fleet: seat crashed early (${el}s, 3.1)"
 mkdir -p "$F/faketmux"
-printf '#!/bin/bash\ncase " $* " in *" list-panes "*) echo "protocol version mismatch (client 9, server 8)" >\&2; exit 1 ;; esac\nexec %q "$@"\n' "$(command -v tmux)" > "$F/faketmux/tmux"; chmod +x "$F/faketmux/tmux"
+printf '#!/bin/bash\ncase " $* " in *" list-panes "*) echo "protocol version mismatch (client 9, server 8)" >&2; exit 1 ;; esac\nexec %q "$@"\n' "$(command -v tmux)" > "$F/faketmux/tmux"; chmod +x "$F/faketmux/tmux"
 out=$(ff env PATH="$F/faketmux:$F/bin:/usr/bin:/bin" QUINTET_CLAUDE_ONESHOT_CMD='sleep 2; echo unknown-ans-31' "$BIN" fleet "hi" claude 2>&1)
 echo "$out" | grep -q "unknown-ans-31" && ! echo "$out" | grep -q "worker-crashed\|exited without a result" && ok "tmux error (unknown liveness) doesn't mark the seat crashed (3.1)" || bad "tmux error (unknown liveness) doesn't mark the seat crashed (3.1)"
+
+# 4.1: a quota message ends the call at once; the provider is skipped next run.
+t0=$(date +%s)
+out=$(ff env QUINTET_HOME="$F/p4home" QUINTET_CLAUDE_ONESHOT_CMD='echo "TerminalQuotaError: out of quota" >&2; sleep 3181' "$BIN" fleet --no-tmux "hi" claude 2>&1)
+el=$(( $(date +%s) - t0 ))
+[[ $el -lt 5 ]] && echo "$out" | grep -q "claude   \[125:quota\]" && ! pgrep -x -f "sleep 3181" >/dev/null && ok "quota message stops the call fast, none left (${el}s, 4.1)" || { pkill -x -f "sleep 3181"; bad "quota message stops the call fast, none left (${el}s, 4.1)"; }
+out=$(ff env QUINTET_HOME="$F/p4home" "$BIN" fleet --no-tmux "hi" claude 2>&1)
+out2=$(ff env QUINTET_HOME="$F/p4home" "$BIN" providers 2>&1)
+echo "$out" | grep -q "skipping claude (out of quota" && echo "$out2" | grep -q "claude .*quota=until" && ok "quota-marked provider is skipped and shown in providers (4.1)" || bad "quota-marked provider is skipped and shown in providers (4.1)"
+
+# 4.2: empty and too-large answers are labeled.
+out=$(ff env QUINTET_HOME="$F/p4home" QUINTET_CODEX_ONESHOT_CMD='true' "$BIN" fleet --no-tmux "hi" codex 2>&1)
+out2=$(ff env QUINTET_HOME="$F/p4home" QUINTET_CODEX_ONESHOT_CMD='echo "error: prompt is too long" >&2; exit 1' "$BIN" fleet --no-tmux "hi" codex 2>&1)
+echo "$out" | grep -q "codex   \[1:empty\]" && echo "$out2" | grep -q "codex   \[1:too-large\]" && ok "empty and too-large answers are labeled (4.2)" || bad "empty and too-large answers are labeled (4.2)"
+
+# 4.3 / 4.4: the command deadline stops the seat, its output is kept as partial,
+# and there's no time left for a fallback.
+t0=$(date +%s)
+out=$(ff env QUINTET_HOME="$F/p4home2" QUINTET_KILL_GRACE=1 QUINTET_CODEX_ONESHOT_CMD='echo part1-44; sleep 3182' "$BIN" fleet --no-tmux --deadline 3 "hi" codex 2>&1)
+el=$(( $(date +%s) - t0 ))
+[[ $el -lt 8 ]] && echo "$out" | grep -q "codex   \[124:timeout\] (partial)" && echo "$out" | grep -q "part1-44" && echo "$out" | grep -q "skipping fallback" && ! pgrep -x -f "sleep 3182" >/dev/null \
+    && ok "deadline stops the seat, keeps partial output, skips the fallback (${el}s, 4.3/4.4)" || { pkill -x -f "sleep 3182"; bad "deadline stops the seat, keeps partial output, skips the fallback (${el}s, 4.3/4.4)"; }
 
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)

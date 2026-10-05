@@ -332,6 +332,8 @@ quintet_provider_timeout() {
 # as an argument (agy, copilot, qwen, opencode): one argv string is capped at
 # 128 KiB (MAX_ARG_STRLEN). claude and codex read the prompt on stdin instead.
 QUINTET_ARGV_PROMPT_MAX="${QUINTET_ARGV_PROMPT_MAX:-102400}"
+# A CLI's out-of-quota message (stderr). Narrow on purpose: a hit stops the call.
+QUINTET_QUOTA_RE='TerminalQuotaError|insufficient_quota|usage limit reached'
 
 # _quintet_pstat <pid> — print "<state> <starttime>" from /proc/<pid>/stat.
 # The command name can hold spaces, so fields are counted after its closing ")".
@@ -440,14 +442,25 @@ _quintet_supervise() {
     set +m
     st=$(_quintet_pstat "$pid") && st="${st#* }" || st=""
     deadline=$(( SECONDS + 10#$t ))
+    local n=0 quota=false
     while [[ -n "$st" ]] && _quintet_listed_alive "$pid:$st" && (( SECONDS < deadline )); do
         if [[ -n "$tee_to" ]]; then
             size=$(wc -c < "$out" 2>/dev/null) || size=0
             (( size > shown )) && { tail -c +"$((shown + 1))" "$out" | head -c "$((size - shown))" >> "$tee_to"; shown=$size; }
         fi
+        # About once a second: a quota message on stderr ends the call now
+        # (the CLI would otherwise retry until the timeout). Retry notices don't count.
+        if (( ++n % 5 == 0 )) && grep -Ei "$QUINTET_QUOTA_RE" "$err" 2>/dev/null | grep -viq retry; then
+            quota=true; break
+        fi
         sleep 0.2
     done
-    if [[ -n "$st" ]] && _quintet_listed_alive "$pid:$st"; then
+    if [[ "$quota" == true ]]; then
+        _quintet_group_stop "$pid" "$st" "$grace"
+        wait "$pid" 2>/dev/null
+        printf 'quintet: quota exhausted\n' >> "$err"
+        rc=125
+    elif [[ -n "$st" ]] && _quintet_listed_alive "$pid:$st"; then
         _quintet_group_stop "$pid" "$st" "$grace"
         wait "$pid" 2>/dev/null
         rc=124
@@ -487,7 +500,17 @@ quintet_provider_oneshot() {
     [[ -n "$effort" ]] || effort="$(quintet_resolve_effort "$provider" "${QUINTET_EFFORT_MAP:-}" "${QUINTET_EFFORT_CLI:-}")" || return 2
     _quintet_caps_warn "$provider" "$no_mcp" "$effort"
 
-    local timeout_secs; timeout_secs="$(quintet_provider_timeout "$provider")"
+    local timeout_secs left; timeout_secs="$(quintet_provider_timeout "$provider")"
+    [[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=240
+    # The command's deadline (QUINTET_DEADLINE_AT, set by fleet/debate) caps it.
+    if [[ "${QUINTET_DEADLINE_AT:-}" =~ ^[0-9]+$ ]]; then
+        left=$(( QUINTET_DEADLINE_AT - $(now_epoch) ))
+        if (( left <= 0 )); then
+            if [[ -n "$err_to" ]]; then echo "quintet: deadline reached" > "$err_to"; else echo "quintet: deadline reached"; fi
+            return 124
+        fi
+        (( left < 10#$timeout_secs )) && timeout_secs=$left
+    fi
 
     # Build the command (and any env prefix) per provider into an array.
     # stdin_prompt=true: the prompt goes on stdin, not in argv.

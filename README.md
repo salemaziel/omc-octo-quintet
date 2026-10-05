@@ -119,6 +119,9 @@ quintet prune        # prune stale team states & debate archives [--days N] [--d
 | `QUINTET_STATE_DIR` | team state dir | `$PWD/.quintet` |
 | `QUINTET_HOME` | reliability/circuit-breaker state | `~/.quintet` |
 | `QUINTET_CB_FAILURE_THRESHOLD` / `QUINTET_CB_COOLDOWN_SECS` | circuit breaker tuning | 3 / 300 |
+| `QUINTET_DEADLINE_SECS` | time budget for a whole fleet/review/debate (same as `--deadline`); fallbacks and debate round 2 are skipped under 20 s left | rounds × slowest timeout + 120 |
+| `QUINTET_QUOTA_TTL_SECS` | how long a provider that reported an exhausted quota is skipped (`quintet providers` shows it) | 3600 |
+| `QUINTET_MAX_ANSWER_BYTES` | answers above this are cut and labeled `0:truncated` | 2097152 |
 
 `<P>` ∈ `CLAUDE CODEX AGY COPILOT QWEN OPENCODE`.
 

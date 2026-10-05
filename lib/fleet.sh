@@ -27,6 +27,9 @@ QUINTET_ANSWER_CAP="${QUINTET_ANSWER_CAP:-8000}"
 # Cap applied when *displaying* a failed provider's output, so a multi-hundred-line
 # error dump doesn't bury the readable answers.
 QUINTET_FAIL_RENDER_CAP="${QUINTET_FAIL_RENDER_CAP:-1500}"
+# An answer above this many bytes is cut and labeled 0:truncated.
+QUINTET_MAX_ANSWER_BYTES="${QUINTET_MAX_ANSWER_BYTES:-2097152}"
+[[ "$QUINTET_MAX_ANSWER_BYTES" =~ ^[0-9]+$ ]] || QUINTET_MAX_ANSWER_BYTES=2097152
 
 # Strip ANSI escapes and cap length. Used before re-injecting an answer into a
 # follow-up prompt and before rendering noisy failure output.
@@ -58,19 +61,50 @@ _quintet_answer_label() {
 }
 
 # Build a clean "ANSWERS" block from a fan-out dir: only providers that succeeded
-# (status 0:ok), ANSI-stripped and length-capped, labeled by provider. Safe to
+# (status 0:*) or timed out with partial output (124:timeout, marked "(partial)"),
+# ANSI-stripped and length-capped, labeled by provider. Safe to
 # splice into a follow-up prompt — bounded well under the argv size limit.
 _quintet_answers_block() {
-    local rundir="$1" f provider st body
+    local rundir="$1" f provider st body tag
     for f in "$rundir"/*.out; do
         [[ -e "$f" ]] || continue
         provider="$(basename "$f" .out)"
         st=$(cat "${f}.status" 2>/dev/null || echo "?")
-        [[ "$st" == 0:* ]] || continue
+        case "$st" in 0:*) tag="" ;; 124:timeout) tag=" (partial)" ;; *) continue ;; esac
         body=$(_quintet_clean_answer "$(cat "$f")")
         [[ -n "${body//[[:space:]]/}" ]] || continue
-        printf -- '--- %s ---\n%s\n\n' "$(_quintet_answer_label "$provider")" "$body"
+        printf -- '--- %s%s ---\n%s\n\n' "$(_quintet_answer_label "$provider")" "$tag" "$body"
     done
+}
+
+# _quintet_time_left — seconds until QUINTET_DEADLINE_AT (a large number if unset).
+_quintet_time_left() {
+    if [[ "${QUINTET_DEADLINE_AT:-}" =~ ^[0-9]+$ ]]; then
+        echo $(( QUINTET_DEADLINE_AT - $(now_epoch) ))
+    else
+        echo 999999
+    fi
+}
+
+# _quintet_deadline_init <rounds> <provider...> — one wall-clock budget for the
+# whole command: QUINTET_DEADLINE_SECS (or --deadline), else rounds × the slowest
+# provider's timeout + 120 s. Exported as QUINTET_DEADLINE_AT (tmux workers get it
+# via the env file). An already-set deadline (a debate's) is kept.
+_quintet_deadline_init() {
+    local rounds="$1" p t max_t=0 budget; shift
+    [[ "${QUINTET_DEADLINE_AT:-}" =~ ^[0-9]+$ ]] && return 0
+    budget="${QUINTET_DEADLINE_SECS:-}"
+    if [[ -n "$budget" ]]; then
+        [[ "$budget" =~ ^[0-9]+$ ]] || die "invalid deadline '$budget' (seconds)"
+        budget=$(( 10#$budget ))
+    else
+        for p in "$@"; do
+            t="$(quintet_provider_timeout "$p")"; [[ "$t" =~ ^[0-9]+$ ]] || t=240
+            (( 10#$t > max_t )) && max_t=$(( 10#$t ))
+        done
+        budget=$(( rounds * max_t + 120 ))
+    fi
+    export QUINTET_DEADLINE_AT=$(( $(now_epoch) + budget ))
 }
 
 # _quintet_token_provider <token> — provider of a [N:]provider[:role[:model]]
@@ -122,6 +156,10 @@ _quintet_resolve_providers() {
         fi
         if circuit_open "$p"; then
             log WARN "skipping $p (circuit breaker open — cooling down)"; continue
+        fi
+        local q_until
+        if q_until="$(quota_blocked "$p")"; then
+            log WARN "skipping $p (out of quota; retry after $(date -d "@$q_until" +%H:%M 2>/dev/null || echo "$q_until"))"; continue
         fi
         _qrp_out+=( "$p" )
     done
@@ -181,16 +219,38 @@ _quintet_fleet_one() {
     local errf="${out%.out}.err"
     resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp" "" "" "" "$tee_to" "$errf"); code=$?
     end=$(now_epoch); secs=$(( end - start ))
+    local errtext label=""; errtext="$(cat -- "$errf" 2>/dev/null)"
+    # Exit 0 with nothing to show is a failed answer (transient: the fallback runs).
+    if [[ $code -eq 0 && -z "${resp//[[:space:]]/}" ]]; then
+        code=1; label="empty"
+    fi
+    printf '%s' "$resp" > "$out"
     if [[ $code -ne 0 ]]; then
-        local class; class=$(record_failure "$provider" "$code" "$resp" "$(cat -- "$errf" 2>/dev/null)")
-        printf '%s' "$resp" > "$out"
-        echo "$code:$class" > "${out}.status"
+        # Quota is tracked by its TTL mark only, not the breaker (decision 7).
+        local class=""
+        [[ $code -eq 125 ]] || class=$(record_failure "$provider" "$code" "$resp" "$errtext")
+        if [[ -z "$label" ]]; then
+            if [[ $code -eq 125 ]]; then
+                label="quota"; quota_mark "$provider"
+            elif grep -Eqi 'quintet: prompt too large|prompt is too long|context length' <<< "$errtext"; then
+                label="too-large"
+            elif [[ $code -eq 124 ]]; then
+                label="timeout"
+            else
+                label="$class"
+            fi
+        fi
+        echo "$code:$label" > "${out}.status"
         # Live completion line so the run doesn't go dark while it works.
-        log WARN "✗ $(quintet_provider_emoji "$provider") $provider failed [${code}:${class}] after ${secs}s"
+        log WARN "✗ $(quintet_provider_emoji "$provider") $provider failed [${code}:${label}] after ${secs}s"
     else
         record_success "$provider"
-        printf '%s' "$resp" > "$out"
-        echo "0:ok" > "${out}.status"
+        label="ok"
+        if (( $(wc -c < "$out") > QUINTET_MAX_ANSWER_BYTES )); then
+            head -c "$QUINTET_MAX_ANSWER_BYTES" "$out" > "${out}.tmp" && mv -- "${out}.tmp" "$out"
+            label="truncated"
+        fi
+        echo "0:$label" > "${out}.status"
         log INFO "✓ $(quintet_provider_emoji "$provider") $provider answered in ${secs}s"
     fi
 }
@@ -271,7 +331,12 @@ _quintet_fan_out_tmux() {
         [[ "$t" =~ ^[0-9]+$ ]] || t=240
         (( 10#$t > max_t )) && max_t=$((10#$t))
     done
-    local deadline=$(( $(now_epoch) + max_t + 30 ))
+    local deadline=$(( $(now_epoch) + max_t + 30 )) g="${QUINTET_KILL_GRACE:-10}"
+    # The command's deadline caps it too (workers stop at it, plus kill grace).
+    [[ "$g" =~ ^[0-9]+$ ]] || g=10
+    if [[ "${QUINTET_DEADLINE_AT:-}" =~ ^[0-9]+$ ]] && (( QUINTET_DEADLINE_AT + 10#$g + 5 < deadline )); then
+        deadline=$(( QUINTET_DEADLINE_AT + 10#$g + 5 ))
+    fi
     # A tmux error (liveness unknown) keeps polling until the deadline.
     local all_done lv
     while :; do
@@ -295,12 +360,11 @@ _quintet_fan_out_tmux() {
         sleep 0.5
     done
 
-    local class
     for p in "${providers[@]}"; do
         if [[ ! -f "${rundir}/${p}.out.status" ]]; then
             echo "Execution timed out in tmux window" >> "${rundir}/${p}.out"
-            class="$(record_failure "$p" 124 "fleet tmux poll timeout")"
-            echo "124:${class}" > "${rundir}/${p}.out.status"
+            record_failure "$p" 124 "fleet tmux poll timeout" >/dev/null
+            echo "124:timeout" > "${rundir}/${p}.out.status"
             log WARN "✗ $(quintet_provider_emoji "$p") $p timed out in tmux"
         fi
     done
@@ -421,9 +485,14 @@ ${prompt}"
     for p in "${providers[@]}"; do
         local st; st=$(cat "${rundir}/${p}.out.status" 2>/dev/null || echo "1:transient")
         if [[ "$st" != 0:* ]]; then
-            local fb; fb=$(pick_fallback "$p" "${QUINTET_PROVIDERS[@]}") || continue
+            local fb left; fb=$(pick_fallback "$p" "${QUINTET_PROVIDERS[@]}") || continue
             # don't double-run a provider we already used
             printf '%s\n' "${providers[@]}" | grep -qx "$fb" && continue
+            left="$(_quintet_time_left)"
+            if (( left < 20 )); then
+                log WARN "$p failed (${st#*:}); skipping fallback → $fb (${left}s left before the deadline)"
+                continue
+            fi
             log WARN "$p failed (${st#*:}); falling back → $fb"
             _quintet_fleet_one "$fb" "$prompt" "${rundir}/${p}__fallback_${fb}.out" "$no_mcp"
         fi
@@ -432,16 +501,19 @@ ${prompt}"
 }
 
 _quintet_render_dir() {
-    local rundir="$1" f provider st body
+    local rundir="$1" f provider st body partial
     for f in "$rundir"/*.out; do
         [[ -e "$f" ]] || continue
         provider="$(basename "$f" .out)"
         st=$(cat "${f}.status" 2>/dev/null || echo "?")
         echo "════════════════════════════════════════════════════════════"
-        echo "$(quintet_provider_emoji "${provider##*__fallback_}") $(_quintet_answer_label "$provider")   [${st}]"
+        partial=""
+        [[ "$st" == 124:timeout && -n "$(tr -d '[:space:]' < "$f" 2>/dev/null | head -c 1)" ]] && partial=" (partial)"
+        echo "$(quintet_provider_emoji "${provider##*__fallback_}") $(_quintet_answer_label "$provider")   [${st}]${partial}"
         echo "════════════════════════════════════════════════════════════"
-        if [[ "$st" == 0:* ]]; then
+        if [[ "$st" == 0:* || -n "$partial" ]]; then
             cat "$f"
+            [[ -n "$partial" ]] && echo "[partial: timed out before finishing]"
         else
             # Failed providers often dump hundreds of lines of CLI noise — trim it
             # so it doesn't bury the real answers.
@@ -463,6 +535,7 @@ quintet_fleet_parallel() {
                        export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
             --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
                        export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
+            --deadline) need_arg "$1" $#; export QUINTET_DEADLINE_SECS="$2"; shift 2 ;;
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
@@ -481,6 +554,7 @@ quintet_fleet_parallel() {
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
     _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
     _quintet_check_fleet_values "${plist[@]}"
+    _quintet_deadline_init 1 "${plist[@]}"
     local rundir
     rundir="$(_quintet_fan_out "$prompt" "$prov_arg" "${plist[@]}")" || return 1
     [[ -d "$rundir" ]] || return 1
@@ -500,6 +574,7 @@ quintet_fleet_review() {
                        export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
             --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
                        export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
+            --deadline) need_arg "$1" $#; export QUINTET_DEADLINE_SECS="$2"; shift 2 ;;
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
@@ -535,6 +610,7 @@ quintet_fleet_debate() {
                        export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
             --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
                        export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
+            --deadline) need_arg "$1" $#; export QUINTET_DEADLINE_SECS="$2"; shift 2 ;;
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"
@@ -561,6 +637,7 @@ quintet_fleet_debate() {
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet debate: no ready providers (run: quintet doctor)"
     _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
     _quintet_check_fleet_values "${plist[@]}"
+    _quintet_deadline_init 2 "${plist[@]}"
 
     log INFO "── debate round 1: independent positions ──"
     local r1
@@ -582,6 +659,15 @@ quintet_fleet_debate() {
         # All providers failed round 1 — signal failure so orchestrators don't
         # treat an empty debate as a successful run.
         return 1
+    fi
+
+    local left; left="$(_quintet_time_left)"
+    if (( left < 20 )); then
+        log WARN "skipping debate round 2 (${left}s left before the deadline)"
+        rm -rf "$r1" 2>/dev/null || true
+        echo
+        echo "📁 Debate transcript (round 1 only): ${archive}/round1.md"
+        return 0
     fi
 
     log INFO "── debate round 2: cross-critique ──"

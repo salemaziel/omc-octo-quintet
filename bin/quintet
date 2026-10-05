@@ -62,6 +62,7 @@ TEAM MODE (persistent tmux worker teams):
 
 FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
   quintet fleet   "<prompt>" [providers] [--no-tmux] [--no-mcp] [--safe] [--model V] [--effort V]
+                  [--deadline SECS]
   quintet consult "<prompt>" [providers] [same flags]    # alias of fleet (advisory)
   quintet debate  "<question>" [providers] [same flags]  # 2-round cross-critique
   quintet review  "<diff|file|desc>" [providers] [same flags]
@@ -71,6 +72,10 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
   provider=value[,provider=value] (e.g. --model codex=gpt-6.1-sol).
   A prompt of "-" is read from stdin:  git diff | quintet review - claude,codex
   claude and codex take any prompt size; agy/copilot/qwen/opencode take up to 100 KB.
+  --deadline   one time budget for the whole command (fallbacks and debate round 2
+               are skipped under 20 s left); default: rounds x slowest timeout + 120 s
+  Seat status: 0:ok, 0:truncated (over 2 MB), 1:empty, N:too-large, 124:timeout
+  (any output shown as partial), 125:quota (provider skipped for 1 h), N:<class>.
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq
@@ -110,11 +115,12 @@ cmd_doctor() {
 cmd_providers() {
     local p
     for p in "${QUINTET_PROVIDERS[@]}"; do
-        printf '%s %-8s installed=%-3s auth=%-12s ready=%s\n' \
+        printf '%s %-8s installed=%-3s auth=%-12s ready=%s%s\n' \
             "$(quintet_provider_emoji "$p")" "$p" \
             "$(quintet_provider_installed "$p" && echo yes || echo no)" \
             "$(quintet_provider_auth "$p")" \
-            "$(quintet_provider_ready "$p" && echo yes || echo no)"
+            "$(quintet_provider_ready "$p" && echo yes || echo no)" \
+            "$(q=$(quota_blocked "$p") && echo " quota=until $(date -d "@$q" +%H:%M 2>/dev/null || echo "$q")")"
     done
 }
 
