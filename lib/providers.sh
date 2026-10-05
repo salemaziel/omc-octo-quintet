@@ -167,24 +167,125 @@ quintet_provider_ready() {
     return 0
 }
 
+# quintet_provider_caps <provider> -> "mcp_off=<full|partial|none> effort=<yes|variant|no>"
+# What --no-mcp and --effort can actually achieve per provider (A8, A16).
+#   copilot partial: --disable-builtin-mcps only; user/workspace/plugin MCP servers
+#   stay on (would need --disable-mcp-server per entry of `copilot mcp list`,
+#   whose output format isn't documented in --help).
+#   opencode effort=variant: mapped to --variant. qwen: flags unverified.
+quintet_provider_caps() {
+    case "$1" in
+        claude|codex) echo "mcp_off=full effort=yes" ;;
+        agy|gemini)   echo "mcp_off=none effort=yes" ;;
+        copilot)      echo "mcp_off=partial effort=yes" ;;
+        opencode)     echo "mcp_off=none effort=variant" ;;
+        *)            echo "mcp_off=none effort=no" ;;
+    esac
+}
+
+# quintet_no_mcp_effective <provider> <no_mcp> -> full|partial|none|not-requested
+quintet_no_mcp_effective() {
+    [[ "$2" == "true" || "$2" == "--no-mcp" ]] || { echo "not-requested"; return 0; }
+    local caps; caps="$(quintet_provider_caps "$1")"; caps="${caps#mcp_off=}"
+    echo "${caps%% *}"
+}
+
+# WARN when a requested option isn't fully honored by a provider.
+_quintet_caps_warn() {
+    local provider="$1" no_mcp="$2" effort="$3" eff
+    eff="$(quintet_no_mcp_effective "$provider" "$no_mcp")"
+    case "$eff" in
+        partial) log WARN "$provider: --no-mcp is partial (built-in MCP servers off; user/workspace/plugin servers stay on)" ;;
+        none)    log WARN "$provider: --no-mcp not supported; MCP servers stay on" ;;
+    esac
+    if [[ -n "$effort" && "$(quintet_provider_caps "$provider")" == *effort=no* ]]; then
+        log WARN "$provider: --effort not supported; ignored"
+    fi
+    return 0
+}
+
+# _quintet_cli_map_get <map> <provider> — value for <provider> in
+# "p=v[,p=v]" (first match wins; "gemini" is an alias of "agy").
+_quintet_cli_map_get() {
+    local map="$1" provider="$2" item k
+    [[ "$provider" == "gemini" ]] && provider="agy"
+    local -a items=()
+    IFS=',' read -ra items <<< "$map"
+    for item in "${items[@]}"; do
+        k="${item%%=*}"; [[ "$k" == "gemini" ]] && k="agy"
+        [[ "$k" == "$provider" ]] && { printf '%s' "${item#*=}"; return 0; }
+    done
+    return 0
+}
+
+# quintet_parse_cli_value <flag> <value> <map_var> <bare_var>
+# --model/--effort accept a bare value or "provider=value[,provider=value]".
+# Stores into the named variables (map or bare); dies on a malformed map.
+quintet_parse_cli_value() {
+    local flag="$1" val="$2" item p
+    local -n _qpc_map="$3" _qpc_bare="$4"
+    if [[ "$val" == *=* ]]; then
+        local -a items=()
+        IFS=',' read -ra items <<< "$val"
+        for item in "${items[@]}"; do
+            p="${item%%=*}"
+            [[ "$item" == *=?* ]] || die "$flag: bad entry '$item' (use provider=value[,provider=value])"
+            quintet_provider_validate "$p"
+        done
+        _qpc_map="${_qpc_map:+${_qpc_map},}${val}"
+    else
+        _qpc_bare="$val"
+    fi
+}
+
+# quintet_resolve_model <provider> <cli_map> <spec_model> [cli_bare]
+# Decision 3 precedence (CLI beats env at every level):
+#   per-provider CLI map > team spec model > bare --model > QUINTET_<P>_MODEL > QUINTET_MODEL
+quintet_resolve_model() {
+    local provider="$1" map="$2" spec="$3" bare="${4:-}" v
+    v="$(_quintet_cli_map_get "$map" "$provider")"
+    [[ -n "$v" ]] || v="$spec"
+    [[ -n "$v" ]] || v="$bare"
+    if [[ -z "$v" ]]; then
+        local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+        local pv="QUINTET_${p_upper}_MODEL"
+        v="${!pv:-${QUINTET_MODEL:-}}"
+    fi
+    printf '%s' "$v"
+}
+
+# quintet_resolve_effort <provider> <cli_map> [cli_bare]
+#   per-provider CLI map > bare --effort > QUINTET_<P>_EFFORT > QUINTET_EFFORT
+quintet_resolve_effort() {
+    local provider="$1" map="$2" bare="${3:-}" v
+    v="$(_quintet_cli_map_get "$map" "$provider")"
+    [[ -n "$v" ]] || v="$bare"
+    if [[ -z "$v" ]]; then
+        local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
+        local pv="QUINTET_${p_upper}_EFFORT"
+        v="${!pv:-${QUINTET_EFFORT:-}}"
+    fi
+    printf '%s' "$v"
+}
+
 # quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode]
 # Runs the CLI headless, prints the response to stdout, returns the CLI exit code.
 # Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
     local no_mcp="${3:-${QUINTET_NO_MCP:-false}}"
-    local model="${4:-${QUINTET_MODEL:-}}"
-    local effort="${5:-${QUINTET_EFFORT:-}}"
+    local model="${4:-}"
+    local effort="${5:-}"
     local safe_mode="${6:-${QUINTET_SAFE_MODE:-false}}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
     [[ "$safe_mode" == "--safe" ]] && safe_mode=true
 
     local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
-    local prov_model_var="QUINTET_${p_upper}_MODEL"
-    [[ -n "${!prov_model_var:-}" ]] && model="${!prov_model_var}"
-
-    local prov_effort_var="QUINTET_${p_upper}_EFFORT"
-    [[ -n "${!prov_effort_var:-}" ]] && effort="${!prov_effort_var}"
+    # Explicit args win; otherwise resolve CLI map/bare value (exported by the
+    # fleet commands as QUINTET_{MODEL,EFFORT}_{MAP,CLI}) and env (decision 3).
+    [[ -n "$model" ]]  || model="$(quintet_resolve_model "$provider" "${QUINTET_MODEL_MAP:-}" "" "${QUINTET_MODEL_CLI:-}")" || return 2
+    [[ -n "$effort" ]] || effort="$(quintet_resolve_effort "$provider" "${QUINTET_EFFORT_MAP:-}" "${QUINTET_EFFORT_CLI:-}")" || return 2
+    _quintet_caps_warn "$provider" "$no_mcp" "$effort"
 
     # Generous defaults: a cold-started headless CLI doing real reasoning routinely
     # needs >120s. The earlier 90–120s ceilings were the main source of exit-124
@@ -233,6 +334,7 @@ quintet_provider_oneshot() {
                 # put it in argv (visible in /proc/*/cmdline).
                 cmd=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
+                [[ -n "$effort" ]] && cmd+=(--reasoning-effort "$effort")
                 ;;
             qwen)
                 cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
@@ -242,10 +344,11 @@ quintet_provider_oneshot() {
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 ;;
             opencode)
+                # --pure is "no external plugins", not MCP: never used for --no-mcp.
                 cmd=(timeout "$timeout_secs" opencode run)
-                [[ "$no_mcp" == "true" ]] && cmd+=(--pure)
                 [[ "$safe_mode" != "true" ]] && cmd+=(--auto)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
+                [[ -n "$effort" ]] && cmd+=(--variant "$effort")
                 cmd+=("$prompt")
                 ;;
             *)
@@ -270,87 +373,71 @@ quintet_provider_oneshot() {
 
 # ── INTERACTIVE launch (for tmux team workers) ─────────────────────────────────
 # quintet_provider_launch_cmd <provider> [no_mcp] [model] [effort] [safe_mode]
+# model/effort are already-resolved values (quintet_resolve_model/_effort); this
+# function never reads QUINTET_*_MODEL. Output is a shell command string built
+# from an argv array with printf %q, so model/effort values can't inject shell
+# syntax or extra flags (C1). A custom QUINTET_<P>_LAUNCH is a documented raw
+# shell override and is returned verbatim.
 quintet_provider_launch_cmd() {
     local provider="$1"
     local no_mcp="${2:-${QUINTET_NO_MCP:-false}}"
-    local model="${3:-${QUINTET_MODEL:-}}"
-    local effort="${4:-${QUINTET_EFFORT:-}}"
+    local model="${3:-}"
+    local effort="${4:-}"
     local safe_mode="${5:-${QUINTET_SAFE_MODE:-false}}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
     [[ "$safe_mode" == "--safe" ]] && safe_mode=true
 
     local p_upper; p_upper="$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')"
-    local prov_model_var="QUINTET_${p_upper}_MODEL"
-    [[ -n "${!prov_model_var:-}" ]] && model="${!prov_model_var}"
+    local custom_var="QUINTET_${p_upper}_LAUNCH" custom
+    custom="${!custom_var:-}"
+    [[ "$provider" == "agy" || "$provider" == "gemini" ]] && custom="${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-}}"
+    if [[ -n "$custom" ]]; then
+        printf '%s\n' "$custom"; return 0
+    fi
+    _quintet_caps_warn "$provider" "$no_mcp" "$effort"
 
-    local prov_effort_var="QUINTET_${p_upper}_EFFORT"
-    [[ -n "${!prov_effort_var:-}" ]] && effort="${!prov_effort_var}"
-
+    local -a a=()
     case "$provider" in
         claude)
-            if [[ -n "${QUINTET_CLAUDE_LAUNCH:-}" ]]; then
-                echo "$QUINTET_CLAUDE_LAUNCH"
-            else
-                local cmd="claude"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --permission-mode bypassPermissions"
-                [[ "$no_mcp" == "true" ]] && cmd+=" --strict-mcp-config"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                [[ -n "$effort" ]] && cmd+=" --effort ${effort}"
-                echo "$cmd"
-            fi ;;
+            a=(claude)
+            [[ "$safe_mode" != "true" ]] && a+=(--permission-mode bypassPermissions)
+            [[ "$no_mcp" == "true" ]] && a+=(--strict-mcp-config)
+            [[ -n "$model" ]] && a+=(--model "$model")
+            [[ -n "$effort" ]] && a+=(--effort "$effort") ;;
         codex)
-            if [[ -n "${QUINTET_CODEX_LAUNCH:-}" ]]; then
-                echo "$QUINTET_CODEX_LAUNCH"
-            else
-                local cmd="codex"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --yolo"
-                [[ "$no_mcp" == "true" ]] && cmd+=" -c mcp_servers={}"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort=${effort}"
-                echo "$cmd"
-            fi ;;
+            a=(codex)
+            [[ "$safe_mode" != "true" ]] && a+=(--yolo)
+            [[ "$no_mcp" == "true" ]] && a+=(-c 'mcp_servers={}')
+            [[ -n "$model" ]] && a+=(--model "$model")
+            [[ -n "$effort" ]] && a+=(-c "model_reasoning_effort=${effort}") ;;
         agy|gemini)
-            if [[ -n "${QUINTET_AGY_LAUNCH:-${QUINTET_GEMINI_LAUNCH:-}}" ]]; then
-                echo "${QUINTET_AGY_LAUNCH:-$QUINTET_GEMINI_LAUNCH}"
-            else
-                local cmd="agy"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --dangerously-skip-permissions"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                [[ -n "$effort" ]] && cmd+=" --effort ${effort}"
-                echo "$cmd"
-            fi ;;
+            a=(agy)
+            [[ "$safe_mode" != "true" ]] && a+=(--dangerously-skip-permissions)
+            [[ -n "$model" ]] && a+=(--model "$model")
+            [[ -n "$effort" ]] && a+=(--effort "$effort") ;;
         copilot)
-            if [[ -n "${QUINTET_COPILOT_LAUNCH:-}" ]]; then
-                echo "$QUINTET_COPILOT_LAUNCH"
-            else
-                local cmd="copilot"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --allow-all-tools"
-                [[ "$no_mcp" == "true" ]] && cmd+=" --disable-builtin-mcps"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                echo "$cmd"
-            fi ;;
+            # --allow-all = tools + paths + urls, so path/URL prompts don't stall
+            # workers (A15). Nothing under --safe.
+            a=(copilot)
+            [[ "$safe_mode" != "true" ]] && a+=(--allow-all)
+            [[ "$no_mcp" == "true" ]] && a+=(--disable-builtin-mcps)
+            [[ -n "$model" ]] && a+=(--model "$model")
+            [[ -n "$effort" ]] && a+=(--reasoning-effort "$effort") ;;
         qwen)
-            if [[ -n "${QUINTET_QWEN_LAUNCH:-}" ]]; then
-                echo "$QUINTET_QWEN_LAUNCH"
-            else
-                local cmd="env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --approval-mode yolo"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                echo "$cmd"
-            fi ;;
+            a=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen)
+            [[ "$safe_mode" != "true" ]] && a+=(--approval-mode yolo)
+            [[ -n "$model" ]] && a+=(--model "$model") ;;
         opencode)
-            if [[ -n "${QUINTET_OPENCODE_LAUNCH:-}" ]]; then
-                echo "$QUINTET_OPENCODE_LAUNCH"
-            else
-                local cmd="opencode"
-                [[ "$no_mcp" == "true" ]] && cmd+=" --pure"
-                [[ "$safe_mode" != "true" ]] && cmd+=" --auto"
-                [[ -n "$model" ]] && cmd+=" --model ${model}"
-                echo "$cmd"
-            fi ;;
+            # --pure is "no external plugins", not MCP: never used for --no-mcp.
+            a=(opencode)
+            [[ "$safe_mode" != "true" ]] && a+=(--auto)
+            [[ -n "$model" ]] && a+=(--model "$model")
+            [[ -n "$effort" ]] && a+=(--variant "$effort") ;;
         *)
-            echo "$(quintet_provider_bin "$provider")" ;;
+            a=("$(quintet_provider_bin "$provider")") ;;
     esac
+    local s; s="$(printf '%q ' "${a[@]}")"
+    printf '%s\n' "${s% }"
 }
 
 # Seconds to wait after launching the REPL before injecting the task (cold start).

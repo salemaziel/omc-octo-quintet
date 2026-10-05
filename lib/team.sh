@@ -81,8 +81,9 @@ quintet_team_start() {
     local spec="" task="" cwd="$PWD" name="" tasks_blob=""
     local skip_auth="${QUINTET_SKIP_AUTH_CHECK:-false}"
     local no_mcp="${QUINTET_NO_MCP:-false}"
-    local team_model="${QUINTET_MODEL:-}"
-    local team_effort="${QUINTET_EFFORT:-}"
+    # --model/--effort: bare value = team-wide default, or provider=value[,...]
+    # (resolved per worker by quintet_resolve_model/_effort, decision 3).
+    local model_map="" model_bare="" effort_map="" effort_bare=""
     local safe_mode="${QUINTET_SAFE_MODE:-false}"
 
     # First two positionals are spec + task; rest are flags.
@@ -98,8 +99,8 @@ quintet_team_start() {
             --skip-auth-check)  skip_auth=true; shift ;;
             --no-mcp)           no_mcp=true; shift ;;
             --safe)             safe_mode=true; shift ;;
-            --model)            need_arg "$1" $#; team_model="$2"; shift 2 ;;
-            --effort)           need_arg "$1" $#; team_effort="$2"; shift 2 ;;
+            --model)            need_arg "$1" $#; quintet_parse_cli_value --model "$2" model_map model_bare; shift 2 ;;
+            --effort)           need_arg "$1" $#; quintet_parse_cli_value --effort "$2" effort_map effort_bare; shift 2 ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
@@ -176,7 +177,7 @@ quintet_team_start() {
     trap "rm -rf -- $(printf '%q' "$envdir"); exit 130" INT TERM
     quintet_session_create "$name" "$cwd"
 
-    local worker_entry provider rem role model worker_name wtask role_prompt
+    local worker_entry provider rem role model effort mcp_eff worker_name wtask role_prompt
     for worker_entry in "${workers[@]}"; do
         provider="${worker_entry%%:*}"
         rem="${worker_entry#*:}"
@@ -186,7 +187,9 @@ quintet_team_start() {
             model="${rem#*:}"
         fi
         [[ "$role" == "$worker_entry" || -z "$role" ]] && role="stock"
-        [[ -z "$model" ]] && model="$team_model"
+        model="$(quintet_resolve_model "$provider" "$model_map" "$model" "$model_bare")"
+        effort="$(quintet_resolve_effort "$provider" "$effort_map" "$effort_bare")"
+        mcp_eff="$(quintet_no_mcp_effective "$provider" "$no_mcp")"
 
         if [[ "$role" == "stock" ]]; then
             worker_name="w${idx}-${provider}"
@@ -221,9 +224,9 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
         local envf="${envdir}/${worker_name}.env"
         quintet_write_worker_env "$provider" "$envf" || die "team start: cannot write worker env file"
-        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$team_effort" "$safe_mode")" "$envf" || continue
+        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$effort" "$safe_mode")" "$envf" || continue
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
-        worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}")}"
+        worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}"), \"effort\": $(json_escape "${effort:-default}"), \"no_mcp_effective\": $(json_escape "$mcp_eff")}"
 
         # Defer task injection: warm up the REPL first, then send.
         ( sleep "$(quintet_provider_warmup "$provider")"; quintet_window_send "$name" "$worker_name" "$injected" ) &

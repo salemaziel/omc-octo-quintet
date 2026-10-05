@@ -112,6 +112,29 @@ _quintet_resolve_providers() {
     done
 }
 
+# A bare --model/--effort is only unambiguous for a single-provider fleet
+# (decision 3). Bind it to that provider as a map entry so a fallback provider
+# never inherits it; with more than one requested provider, die.
+# Args: provider-list-string resolved-provider...
+_quintet_bind_bare_cli() {
+    local arg="$1" kind bare_var map_var flag n=0 p
+    shift
+    if [[ -z "$arg" || "$arg" == "all" ]]; then
+        n=${#QUINTET_PROVIDERS[@]}
+    else
+        for p in ${arg//,/ }; do [[ "$p" == --* ]] || n=$((n+1)); done
+    fi
+    for kind in MODEL EFFORT; do
+        bare_var="QUINTET_${kind}_CLI"; map_var="QUINTET_${kind}_MAP"
+        [[ -n "${!bare_var:-}" ]] || continue
+        flag="--$(printf '%s' "$kind" | tr '[:upper:]' '[:lower:]')"
+        [[ $n -eq 1 && $# -eq 1 ]] \
+            || die "fleet: bare $flag is ambiguous with more than one provider; use $flag provider=value[,provider=value]"
+        export "${map_var}=${!map_var:+${!map_var},}$1=${!bare_var}"
+        unset "$bare_var"
+    done
+}
+
 # Run one provider one-shot with reliability bookkeeping; write answer to file.
 # Args: provider prompt out_file [no_mcp]
 _quintet_fleet_one() {
@@ -326,8 +349,10 @@ quintet_fleet_parallel() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; quintet_parse_cli_value --model "$2" QUINTET_MODEL_MAP QUINTET_MODEL_CLI
+                       export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
+            --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
+                       export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
@@ -342,6 +367,7 @@ quintet_fleet_parallel() {
     local -a plist=()
     _quintet_resolve_providers plist "$providers"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
+    _quintet_bind_bare_cli "$providers" "${plist[@]}"
     local rundir
     rundir="$(_quintet_fan_out "$prompt" "$providers" "${plist[@]}")" || return 1
     [[ -d "$rundir" ]] || return 1
@@ -357,8 +383,10 @@ quintet_fleet_review() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; quintet_parse_cli_value --model "$2" QUINTET_MODEL_MAP QUINTET_MODEL_CLI
+                       export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
+            --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
+                       export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
@@ -389,8 +417,10 @@ quintet_fleet_debate() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; quintet_parse_cli_value --model "$2" QUINTET_MODEL_MAP QUINTET_MODEL_CLI
+                       export QUINTET_MODEL_MAP QUINTET_MODEL_CLI; shift 2 ;;
+            --effort)  need_arg "$1" $#; quintet_parse_cli_value --effort "$2" QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI
+                       export QUINTET_EFFORT_MAP QUINTET_EFFORT_CLI; shift 2 ;;
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"
@@ -414,6 +444,7 @@ quintet_fleet_debate() {
     local -a plist=()
     _quintet_resolve_providers plist "$providers"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet debate: no ready providers (run: quintet doctor)"
+    _quintet_bind_bare_cli "$providers" "${plist[@]}"
 
     log INFO "── debate round 1: independent positions ──"
     local r1

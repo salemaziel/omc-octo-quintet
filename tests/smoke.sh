@@ -63,9 +63,12 @@ quintet_role_exists "nonexistent_role" && bad "nonexistent role should not exist
 
 echo "── 2e. per-agent mcp toggles ──"
 [[ "$(quintet_provider_launch_cmd "claude" --no-mcp)" == *"strict-mcp-config"* ]] && ok "claude launch with --no-mcp disables MCP" || bad "claude launch with --no-mcp disables MCP"
-[[ "$(quintet_provider_launch_cmd "codex" --no-mcp)" == *"mcp_servers={}"* ]] && ok "codex launch with --no-mcp overrides mcp_servers" || bad "codex launch with --no-mcp overrides mcp_servers"
+# launch strings are %q-escaped argv: eval back into an array to check elements.
+eval "la=($(quintet_provider_launch_cmd "codex" --no-mcp))"
+[[ " ${la[*]} " == *" -c mcp_servers={} "* ]] && ok "codex launch with --no-mcp overrides mcp_servers" || bad "codex launch with --no-mcp overrides mcp_servers"
 [[ "$(quintet_provider_launch_cmd "copilot" --no-mcp)" == *"--disable-builtin-mcps"* ]] && ok "copilot launch with --no-mcp disables MCP" || bad "copilot launch with --no-mcp disables MCP"
-[[ "$(quintet_provider_launch_cmd "opencode" --no-mcp)" == *"--pure"* ]] && ok "opencode launch with --no-mcp runs pure" || bad "opencode launch with --no-mcp runs pure"
+oc_err=$(quintet_provider_launch_cmd "opencode" --no-mcp 2>&1 >/dev/null); oc_out=$(quintet_provider_launch_cmd "opencode" --no-mcp 2>/dev/null)
+[[ "$oc_out" != *"--pure"* ]] && echo "$oc_err" | grep -q "WARN.*opencode: --no-mcp not supported" && ok "opencode --no-mcp: no --pure, WARN instead (A8)" || bad "opencode --no-mcp: no --pure, WARN instead (A8)"
 QUINTET_NO_MCP=true
 [[ "$(quintet_provider_launch_cmd "claude")" == *"strict-mcp-config"* ]] && ok "QUINTET_NO_MCP=true disables MCP by default" || bad "QUINTET_NO_MCP=true disables MCP by default"
 unset QUINTET_NO_MCP
@@ -81,7 +84,7 @@ echo "── 2g. tiered permissions & safety mode (--safe) ──"
 [[ "$(quintet_provider_launch_cmd "claude" false "" "" true)" != *"bypassPermissions"* ]] && ok "safe mode omits claude bypassPermissions" || bad "safe mode omits claude bypassPermissions"
 [[ "$(quintet_provider_launch_cmd "codex" false "" "" true)" != *"--yolo"* ]] && ok "safe mode omits codex --yolo" || bad "safe mode omits codex --yolo"
 [[ "$(quintet_provider_launch_cmd "agy" false "" "" true)" != *"--dangerously-skip-permissions"* ]] && ok "safe mode omits agy --dangerously-skip-permissions" || bad "safe mode omits agy --dangerously-skip-permissions"
-[[ "$(quintet_provider_launch_cmd "copilot" false "" "" true)" != *"--allow-all-tools"* ]] && ok "safe mode omits copilot --allow-all-tools" || bad "safe mode omits copilot --allow-all-tools"
+[[ "$(quintet_provider_launch_cmd "copilot" false "" "" true)" != *"--allow-all"* ]] && ok "safe mode omits copilot --allow-all" || bad "safe mode omits copilot --allow-all"
 [[ "$(quintet_provider_launch_cmd "qwen" false "" "" true)" != *"--approval-mode yolo"* ]] && ok "safe mode omits qwen --approval-mode yolo" || bad "safe mode omits qwen --approval-mode yolo"
 [[ "$(quintet_provider_launch_cmd "opencode" false "" "" true)" != *"--auto"* ]] && ok "safe mode omits opencode --auto" || bad "safe mode omits opencode --auto"
 QUINTET_SAFE_MODE=true
@@ -306,6 +309,78 @@ echo "$doc_out" | grep -q -E '^tmux .*\(tmux [0-9]' && ok "doctor prints tmux ve
 
 unset QUINTET_CLAUDE_LAUNCH QUINTET_CLAUDE_WARMUP QUINTET_STATE_DIR
 rm -rf "$W"
+
+echo "── 7. launch-command safety & model resolution ──"
+X="$(mktemp -d)"; mkdir -p "$X/home" "$X/bin" "$X/log"
+# Stub CLIs: record argv one-per-line, never call a real provider.
+for c in claude codex; do
+    printf '#!/bin/bash\nprintf "%%s\\n" "$@" > "$QUINTET_TEST_STUBLOG/%s.argv"\n[ -n "$QUINTET_TEST_STUB_FAIL" ] && [ "%s" = codex ] && exit 1\necho "stub %s answer"\n' "$c" "$c" "$c" > "$X/bin/$c"
+    chmod +x "$X/bin/$c"
+done
+argv_has() { grep -A1 -x -- "$2" "$X/log/$1.argv" 2>/dev/null | sed -n 2p | grep -qxF -- "$3"; }
+
+# C1: model/effort values are argv elements, never shell syntax.
+eval "la=($(quintet_provider_launch_cmd codex false 'x --yolo' '' true))"
+[[ "${la[*]}" == "codex --model x --yolo" && "${#la[@]}" -eq 3 ]] && ok "safe codex: '--yolo' only inside --model value" || bad "safe codex: '--yolo' only inside --model value"
+eval "la=($(quintet_provider_launch_cmd claude false 'ok; touch /x' 'high; id' false))"
+[[ "${#la[@]}" -eq 7 && "${la[4]}" == "ok; touch /x" && "${la[6]}" == "high; id" ]] && ok "claude model/effort stay single argv elements" || bad "claude model/effort stay single argv elements"
+[[ "$(quintet_provider_launch_cmd "opencode")" == "opencode --auto" ]] && ok "launch string has no trailing space" || bad "launch string has no trailing space"
+eval "la=($(quintet_provider_launch_cmd copilot false m low false))"
+[[ "${la[*]}" == "copilot --allow-all --model m --reasoning-effort low" ]] && ok "copilot: --allow-all + --reasoning-effort (A15/A16)" || bad "copilot: --allow-all + --reasoning-effort (A15/A16)"
+agy_err=$(quintet_provider_launch_cmd agy true 2>&1 >/dev/null)
+echo "$agy_err" | grep -q "WARN.*agy: --no-mcp not supported" && ok "agy --no-mcp warns (A8)" || bad "agy --no-mcp warns (A8)"
+cp_err=$(quintet_provider_launch_cmd copilot true 2>&1 >/dev/null)
+echo "$cp_err" | grep -q "WARN.*copilot: --no-mcp is partial" && ok "copilot --no-mcp warns partial (A8)" || bad "copilot --no-mcp warns partial (A8)"
+
+# C7 / decision 3: resolver precedence.
+r=$(QUINTET_CODEX_MODEL=env QUINTET_MODEL=glob quintet_resolve_model codex "" spec bare); [[ "$r" == spec ]] && ok "spec model beats env" || bad "spec model beats env"
+r=$(QUINTET_CODEX_MODEL=env quintet_resolve_model codex "codex=map" spec bare); [[ "$r" == map ]] && ok "CLI map beats spec" || bad "CLI map beats spec"
+r=$(QUINTET_CODEX_MODEL=env quintet_resolve_model codex "" "" bare); [[ "$r" == bare ]] && ok "bare CLI beats env" || bad "bare CLI beats env"
+r=$(QUINTET_CODEX_MODEL=env QUINTET_MODEL=glob quintet_resolve_model codex "claude=other" "" ""); [[ "$r" == env ]] && ok "provider env beats global env" || bad "provider env beats global env"
+r=$(QUINTET_MODEL=glob quintet_resolve_model codex "" "" ""); [[ "$r" == glob ]] && ok "global env is last resort" || bad "global env is last resort"
+r=$(QUINTET_CODEX_EFFORT=env quintet_resolve_effort codex "codex=high" ""); [[ "$r" == high ]] && ok "effort CLI map beats env" || bad "effort CLI map beats env"
+
+# Team: injection, effective model/effort recorded (stub CLIs on PATH, fake HOME).
+team_x() { ( export PATH="$X/bin:$PATH" HOME="$X/home" QUINTET_HOME="$X/home/.quintet" QUINTET_STATE_DIR="$X/state" \
+    QUINTET_TEST_STUBLOG="$X/log" QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1; "$@" ); }
+mj() { cat "$X/state/teams/$1/team.json" 2>/dev/null; }
+team_x "$BIN" team 1:claude "t" --name "inj-$$" --skip-auth-check --cwd /tmp --safe --model "ok; touch $X/INJECTED" >/dev/null 2>&1
+sleep 1
+[[ ! -e "$X/INJECTED" ]] && ok "model 'ok; touch …' not executed (C1)" || bad "model 'ok; touch …' not executed (C1)"
+argv_has claude --model "ok; touch $X/INJECTED" && ok "injected model reached claude as one argv value" || bad "injected model reached claude as one argv value"
+team_x "$BIN" team shutdown "inj-$$" >/dev/null 2>&1
+rm -f "$X/log/"*.argv
+team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex:stock:spec "t" --name "spec-$$" --skip-auth-check --cwd /tmp --effort codex=high --no-mcp >/dev/null 2>&1
+sleep 1
+argv_has codex --model spec && ok "spec model launched over QUINTET_CODEX_MODEL (C7)" || bad "spec model launched over QUINTET_CODEX_MODEL (C7)"
+mj "spec-$$" | grep -q '"model": "spec"' && ok "manifest records spec model (C7)" || bad "manifest records spec model (C7)"
+mj "spec-$$" | grep -q '"effort": "high"' && ok "manifest records effort (A14)" || bad "manifest records effort (A14)"
+mj "spec-$$" | grep -q '"no_mcp_effective": "full"' && ok "manifest records no_mcp_effective (A8)" || bad "manifest records no_mcp_effective (A8)"
+team_x "$BIN" team shutdown "spec-$$" >/dev/null 2>&1
+team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex "t" --name "envm-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+mj "envm-$$" | grep -q '"model": "env"' && ok "env-only model recorded, not default (C7)" || bad "env-only model recorded, not default (C7)"
+team_x "$BIN" team shutdown "envm-$$" >/dev/null 2>&1
+
+# A7: fleet --model/--effort per provider; bare value only with one provider.
+fleet_x() { ( export PATH="$X/bin:$PATH" HOME="$X/home" QUINTET_HOME="$X/home/.quintet" QUINTET_TEST_STUBLOG="$X/log"
+    unset QUINTET_MODEL QUINTET_EFFORT QUINTET_CLAUDE_MODEL QUINTET_CODEX_MODEL QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD
+    mkdir -p "$X/home/.codex"; touch "$X/home/.codex/auth.json"; "$BIN" "$@" ); }
+out=$(fleet_x fleet --no-tmux "hi" claude,codex --model sonnet 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "bare --model is ambiguous" && ok "fleet bare --model with 2 providers exits 1" || bad "fleet bare --model with 2 providers exits 1"
+rm -f "$X/log/"*.argv
+QUINTET_TEST_STUB_FAIL=1 fleet_x fleet --no-tmux "hi" codex --model codex=X >/dev/null 2>&1
+argv_has codex --model X && ok "fleet --model codex=X reaches codex" || bad "fleet --model codex=X reaches codex"
+[[ -f "$X/log/claude.argv" ]] && ! grep -qx -- --model "$X/log/claude.argv" && ok "fallback claude gets no --model" || bad "fallback claude gets no --model"
+rm -f "$X/log/"*.argv
+QUINTET_TEST_STUB_FAIL=1 fleet_x fleet --no-tmux "hi" codex --model X >/dev/null 2>&1
+argv_has codex --model X && [[ -f "$X/log/claude.argv" ]] && ! grep -qx -- --model "$X/log/claude.argv" && ok "bare --model binds to the single provider, not fallback" || bad "bare --model binds to the single provider, not fallback"
+rm -f "$X/log/"*.argv
+fleet_x fleet "hi" codex --model codex=Y >/dev/null 2>&1
+argv_has codex --model Y && ok "fleet tmux worker gets --model codex=Y" || bad "fleet tmux worker gets --model codex=Y"
+out=$(fleet_x fleet --no-tmux "hi" codex --model bogus=X 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "unsupported provider" && ok "fleet --model with unknown provider key exits 1" || bad "fleet --model with unknown provider key exits 1"
+
+rm -rf "$X"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
