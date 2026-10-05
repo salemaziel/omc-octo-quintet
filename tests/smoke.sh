@@ -115,6 +115,19 @@ else
     rm -f "$marker"; rm -rf "$QUINTET_STATE_DIR"
 fi
 
+echo "── 3c. state pruning & garbage collection ──"
+fake_state="$(mktemp -d)"
+fake_home="$(mktemp -d)"
+mkdir -p "${fake_state}/teams/dead-team-1"
+mkdir -p "${fake_home}/debates/old-debate-1"
+echo '{"name":"dead-team-1"}' > "${fake_state}/teams/dead-team-1/team.json"
+echo '# Old debate' > "${fake_home}/debates/old-debate-1/transcript.md"
+
+QUINTET_STATE_DIR="$fake_state" QUINTET_HOME="$fake_home" "$BIN" prune --days 0 >/dev/null 2>&1 && ok "prune runs successfully" || bad "prune runs successfully"
+[[ ! -d "${fake_state}/teams/dead-team-1" ]] && ok "prune removed dead team" || bad "prune removed dead team"
+[[ ! -d "${fake_home}/debates/old-debate-1" ]] && ok "prune removed aged debate" || bad "prune removed aged debate"
+rm -rf "$fake_state" "$fake_home"
+
 echo "── 4. fleet tmux & fallback execution ──"
 export QUINTET_CLAUDE_ONESHOT_CMD='echo "mock claude fleet answer"'
 out_notmux=$("$BIN" fleet --no-tmux "test prompt" claude 2>&1)

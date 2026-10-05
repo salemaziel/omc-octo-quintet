@@ -24,6 +24,7 @@ source "${QUINTET_ROOT}/lib/reliability.sh"
 source "${QUINTET_ROOT}/lib/tmux.sh"
 source "${QUINTET_ROOT}/lib/team.sh"
 source "${QUINTET_ROOT}/lib/fleet.sh"
+source "${QUINTET_ROOT}/lib/prune.sh"
 
 VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.1.0")"
 
@@ -54,6 +55,7 @@ UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq
   quintet providers       # list provider readiness
   quintet roles           # list supported subagent worker roles
+  quintet prune           # prune stale team states & debate archives [--days N] [--dry-run]
   quintet version
 EOF
 }
@@ -114,6 +116,7 @@ main() {
         doctor)        cmd_doctor ;;
         providers)     cmd_providers ;;
         roles)         quintet_role_list ;;
+        prune)         quintet_prune "$@" ;;
         __fleet_worker) quintet_fleet_worker "$@" ;;
         version|-v|--version) echo "quintet ${VERSION}" ;;
         help|-h|--help|"") usage ;;
