@@ -66,6 +66,8 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
   [providers] = "all" (default) | comma list, e.g.  claude,codex,agy,opencode
   --model/--effort take a bare value only with a single provider; otherwise use
   provider=value[,provider=value] (e.g. --model codex=gpt-6.1-sol).
+  A prompt of "-" is read from stdin:  git diff | quintet review - claude,codex
+  claude and codex take any prompt size; agy/copilot/qwen/opencode take up to 100 KB.
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq

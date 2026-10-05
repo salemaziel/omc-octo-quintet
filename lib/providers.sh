@@ -328,18 +328,129 @@ quintet_provider_timeout() {
     esac
 }
 
-# quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode] [tee_to]
-# Runs the CLI headless, prints the response to stdout, returns the CLI exit code.
-# Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
+# Prompts above this many bytes can't go to a provider that only takes the prompt
+# as an argument (agy, copilot, qwen, opencode): one argv string is capped at
+# 128 KiB (MAX_ARG_STRLEN). claude and codex read the prompt on stdin instead.
+QUINTET_ARGV_PROMPT_MAX="${QUINTET_ARGV_PROMPT_MAX:-102400}"
+
+# _quintet_pstat <pid> — print "<state> <starttime>" from /proc/<pid>/stat.
+# The command name can hold spaces, so fields are counted after its closing ")".
+_quintet_pstat() {
+    local st
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    st=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+    st=${st##*) }
+    set -- $st
+    [[ -n "${20:-}" ]] && echo "$1 ${20}"
+}
+
+# _quintet_descendants <pid> — print "pid:starttime" for every descendant of pid.
+_quintet_descendants() {
+    local c s
+    for c in $(pgrep -P "$1" 2>/dev/null); do
+        s=$(_quintet_pstat "$c") && echo "$c:${s#* }"
+        _quintet_descendants "$c"
+    done
+}
+
+# _quintet_listed_alive <pid:starttime> — true if that pid is still the same
+# process (start time unchanged; a reused pid fails) and not a zombie.
+_quintet_listed_alive() {
+    local s; s=$(_quintet_pstat "${1%%:*}") || return 1
+    [[ "${s%% *}" != Z && "${s#* }" == "${1#*:}" ]]
+}
+
+# _quintet_signal_listed <sig> <pid:starttime>... — signal each listed process
+# that is still the same process.
+_quintet_signal_listed() {
+    local sig="$1" e; shift
+    for e in "$@"; do
+        _quintet_listed_alive "$e" && kill "-$sig" "${e%%:*}" 2>/dev/null
+    done
+    return 0
+}
+
+# _quintet_any_listed <pid:starttime>... — true if any listed process is still running.
+_quintet_any_listed() {
+    local e
+    for e in "$@"; do _quintet_listed_alive "$e" && return 0; done
+    return 1
+}
+
+# _quintet_group_stop <pgid> <grace> — TERM the process group, wait up to
+# <grace> seconds for it to empty, then KILL whatever is left. Descendants are
+# listed first: a child that moved to its own session (setsid) is out of the
+# group and would be orphaned, so it gets the same signals by pid.
+_quintet_group_stop() {
+    local pg="$1" grace="$2" until
+    local -a desc
+    mapfile -t desc < <(_quintet_descendants "$pg")
+    kill -TERM -- "-$pg" 2>/dev/null
+    _quintet_signal_listed TERM "${desc[@]}"
+    until=$(( SECONDS + grace ))
+    while { kill -0 -- "-$pg" 2>/dev/null || _quintet_any_listed "${desc[@]}"; } && (( SECONDS < until )); do sleep 0.2; done
+    kill -KILL -- "-$pg" 2>/dev/null
+    _quintet_signal_listed KILL "${desc[@]}"
+    return 0
+}
+
+# _quintet_supervise <timeout> <in> <out> <err> <tee_to> -- cmd...
+# Runs cmd in its own process group (set -m) with stdin/stdout/stderr on files,
+# so neither a leftover child holding a pipe nor a CLI that ignores TERM can keep
+# the call open. At <timeout> the group gets TERM, then KILL after
+# QUINTET_KILL_GRACE seconds (default 10), and the status is 124. After the CLI
+# exits, anything it left in its group is killed. INT/TERM/HUP (Ctrl-C, tmux
+# kill-session) stop the group the same way before this shell exits. <tee_to>
+# (optional) gets the new stdout bytes as they arrive (the fleet pane view).
+_quintet_supervise() {
+    local t="$1" in="$2" out="$3" err="$4" tee_to="$5"; shift 6
+    local grace="${QUINTET_KILL_GRACE:-10}" pid rc deadline shown=0 size
+    [[ "$t" =~ ^[0-9]+$ ]] || t=240
+    [[ "$grace" =~ ^[0-9]+$ ]] || grace=10
+    set -m
+    "$@" <"$in" >"$out" 2>"$err" &
+    pid=$!
+    set +m
+    # shellcheck disable=SC2064  # expand pid/grace now
+    trap "_quintet_group_stop $pid $grace; exit 130" INT TERM HUP
+    deadline=$(( SECONDS + 10#$t ))
+    while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+        if [[ -n "$tee_to" ]]; then
+            size=$(wc -c < "$out" 2>/dev/null) || size=0
+            (( size > shown )) && { tail -c +"$((shown + 1))" "$out" | head -c "$((size - shown))" >> "$tee_to"; shown=$size; }
+        fi
+        sleep 0.2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        _quintet_group_stop "$pid" "$grace"
+        wait "$pid" 2>/dev/null
+        rc=124
+    else
+        wait "$pid"; rc=$?
+    fi
+    kill -KILL -- "-$pid" 2>/dev/null   # reap leftovers in the CLI's group
+    trap - INT TERM HUP
+    [[ -n "$tee_to" ]] && tail -c +"$((shown + 1))" "$out" >> "$tee_to" 2>/dev/null
+    return "$rc"
+}
+
+# quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode] [tee_to] [err_to]
+# Runs the CLI headless, prints the response to stdout, returns the CLI exit code
+# (124 on timeout). Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
+# claude, codex and a custom QUINTET_<P>_ONESHOT_CMD get the prompt on stdin;
+# the others get it as an argument (stdin /dev/null) and fail fast above
+# QUINTET_ARGV_PROMPT_MAX bytes.
 # tee_to (optional): also stream the provider's stdout to this file as it
 # arrives (the fleet tmux worker passes /dev/stderr so it shows in the pane).
+# err_to (optional): write the CLI's stderr there instead of appending it to
+# the output on failure.
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
     local no_mcp="${3:-${QUINTET_NO_MCP:-false}}"
     local model="${4:-}"
     local effort="${5:-}"
     local safe_mode="${6:-${QUINTET_SAFE_MODE:-false}}"
-    local tee_to="${7:-}"
+    local tee_to="${7:-}" err_to="${8:-}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
     [[ "$safe_mode" == "--safe" ]] && safe_mode=true
 
@@ -353,26 +464,30 @@ quintet_provider_oneshot() {
     local timeout_secs; timeout_secs="$(quintet_provider_timeout "$provider")"
 
     # Build the command (and any env prefix) per provider into an array.
+    # stdin_prompt=true: the prompt goes on stdin, not in argv.
     local -a cmd=()
+    local stdin_prompt=true
     local custom_cmd_var="QUINTET_${p_upper}_ONESHOT_CMD"
     if [[ -n "${!custom_cmd_var:-}" ]]; then
         cmd=(bash -c "${!custom_cmd_var}")
     else
         case "$provider" in
             claude)
-                cmd=(timeout "$timeout_secs" claude -p "$prompt")
+                cmd=(claude -p)
                 [[ "$no_mcp" == "true" ]] && cmd+=(--strict-mcp-config)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 [[ -n "$effort" ]] && cmd+=(--effort "$effort")
                 ;;
             codex)
-                cmd=(timeout "$timeout_secs" codex exec "$prompt")
+                cmd=(codex exec)
                 [[ "$no_mcp" == "true" ]] && cmd+=(-c mcp_servers={})
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 [[ -n "$effort" ]] && cmd+=(-c "model_reasoning_effort=${effort}")
+                cmd+=(-)
                 ;;
             agy|gemini)
-                cmd=(timeout "$timeout_secs" agy -p "$prompt")
+                stdin_prompt=false
+                cmd=(agy -p "$prompt")
                 [[ "$safe_mode" != "true" ]] && cmd+=(--dangerously-skip-permissions)
                 cmd+=(--output-format text)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
@@ -381,20 +496,22 @@ quintet_provider_oneshot() {
             copilot)
                 # COPILOT_GITHUB_TOKEN is inherited from the environment; never
                 # put it in argv (visible in /proc/*/cmdline).
-                cmd=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
+                stdin_prompt=false
+                cmd=(copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 [[ -n "$effort" ]] && cmd+=(--reasoning-effort "$effort")
                 ;;
             qwen)
-                cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
-                     timeout "$timeout_secs" qwen -p "$prompt")
+                stdin_prompt=false
+                cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true qwen -p "$prompt")
                 [[ "$safe_mode" != "true" ]] && cmd+=(--approval-mode yolo)
                 cmd+=(-o text)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 ;;
             opencode)
                 # --pure is "no external plugins", not MCP: never used for --no-mcp.
-                cmd=(timeout "$timeout_secs" opencode run)
+                stdin_prompt=false
+                cmd=(opencode run)
                 [[ "$safe_mode" != "true" ]] && cmd+=(--auto)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 [[ -n "$effort" ]] && cmd+=(--variant "$effort")
@@ -405,20 +522,30 @@ quintet_provider_oneshot() {
         esac
     fi
 
-    # Capture stdout (the real answer) and stderr separately so verbose CLI
-    # warnings (agy/qwen) don't pollute a successful response. On failure we
-    # fold stderr in so the reliability layer can classify the error.
-    # _q_errdir: set by the fleet caller to its run dir (C-L1).
-    local errfile out code
-    errfile="$(mktemp "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-err-XXXXXX")"
+    local nbytes; nbytes="$(LC_ALL=C; printf '%s' "${#prompt}")"
+    if [[ "$stdin_prompt" == "false" ]] && (( nbytes > QUINTET_ARGV_PROMPT_MAX )); then
+        local msg="quintet: prompt too large for $provider (${nbytes} bytes; it takes the prompt as an argument, limit ${QUINTET_ARGV_PROMPT_MAX}). claude and codex take long prompts on stdin."
+        if [[ -n "$err_to" ]]; then printf '%s\n' "$msg" > "$err_to"; else printf '%s\n' "$msg"; fi
+        return 2
+    fi
+
+    # stdout (the answer) and stderr go to separate files in a private 0700
+    # dir, so verbose CLI warnings (agy/qwen) don't pollute a successful
+    # response; on failure stderr is folded in (or written to err_to) so the
+    # reliability layer can classify the error. _q_errdir: set by the fleet
+    # caller to its run dir (C-L1).
     # The CLI runs under env -i with only the worker allowlist (same builder as
     # the tmux workers, S-M1) plus this process's own TERM/TMUX/TMUX_PANE: the
     # pane's values in a tmux fleet worker, the caller's terminal with --no-tmux.
-    # The env file lives in a private 0700 dir and is deleted before exec.
-    local envd envf
-    envd="$(mktemp -d "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-env1-XXXXXX")" || { rm -f "$errfile"; log ERROR "one-shot: cannot create env dir"; return 2; }
-    envf="${envd}/${provider}.env"
-    quintet_write_worker_env "$provider" "$envf" || { rm -rf -- "$envd" "$errfile"; log ERROR "one-shot: cannot write env file for $provider"; return 2; }
+    # The env file is deleted before exec.
+    local envd envf inf outf errf code
+    envd="$(mktemp -d "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-env1-XXXXXX")" || { log ERROR "one-shot: cannot create env dir"; return 2; }
+    envf="${envd}/${provider}.env"; outf="${envd}/out"; errf="${envd}/err"; inf=/dev/null
+    quintet_write_worker_env "$provider" "$envf" || { rm -rf -- "$envd"; log ERROR "one-shot: cannot write env file for $provider"; return 2; }
+    if [[ "$stdin_prompt" == "true" ]]; then
+        inf="${envd}/prompt"
+        printf '%s' "$prompt" > "$inf" || { rm -rf -- "$envd"; log ERROR "one-shot: cannot write prompt file"; return 2; }
+    fi
     local -a term_env=()
     [[ -n "${TERM:-}" ]] && term_env+=("TERM=$TERM")
     [[ -n "${TMUX:-}" ]] && term_env+=("TMUX=$TMUX")
@@ -426,18 +553,15 @@ quintet_provider_oneshot() {
     # shellcheck disable=SC2016  # $1/$@ expand in the child bash
     cmd=(env -i "${term_env[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
          quintet-oneshot "$envf" "${cmd[@]}")
-    if [[ -n "$tee_to" ]]; then
-        out="$("${cmd[@]}" 2>"$errfile" | tee -a -- "$tee_to"; exit "${PIPESTATUS[0]}")"; code=$?
-    else
-        out="$("${cmd[@]}" 2>"$errfile")"; code=$?
+    _quintet_supervise "$timeout_secs" "$inf" "$outf" "$errf" "$tee_to" -- "${cmd[@]}"; code=$?
+    [[ $code -eq 124 ]] && printf 'quintet: timed out after %ss\n' "$timeout_secs" >> "$errf"
+    cat -- "$outf" 2>/dev/null
+    if [[ -n "$err_to" ]]; then
+        cat -- "$errf" > "$err_to" 2>/dev/null
+    elif [[ $code -ne 0 ]]; then
+        printf '\n'; cat -- "$errf" 2>/dev/null
     fi
     rm -rf -- "$envd"
-    if [[ $code -ne 0 ]]; then
-        printf '%s\n%s' "$out" "$(cat "$errfile")"
-    else
-        printf '%s' "$out"
-    fi
-    rm -f "$errfile"
     return $code
 }
 

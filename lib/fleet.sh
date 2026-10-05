@@ -177,10 +177,12 @@ _quintet_fleet_one() {
     # The one-shot's stderr temp file goes in the run dir (dynamic scope), so an
     # aborted fleet's rundir cleanup removes it too (C-L1).
     local _q_errdir; _q_errdir="$(dirname -- "$out")"
-    resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp" "" "" "" "$tee_to"); code=$?
+    # stderr goes to <seat>.err, not into the answer; render shows it for a failed seat.
+    local errf="${out%.out}.err"
+    resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp" "" "" "" "$tee_to" "$errf"); code=$?
     end=$(now_epoch); secs=$(( end - start ))
     if [[ $code -ne 0 ]]; then
-        local class; class=$(record_failure "$provider" "$code" "$resp")
+        local class; class=$(record_failure "$provider" "$code" "$resp" "$(cat -- "$errf" 2>/dev/null)")
         printf '%s' "$resp" > "$out"
         echo "$code:$class" > "${out}.status"
         # Live completion line so the run doesn't go dark while it works.
@@ -442,7 +444,7 @@ _quintet_render_dir() {
         else
             # Failed providers often dump hundreds of lines of CLI noise — trim it
             # so it doesn't bury the real answers.
-            _quintet_clean_answer "$(cat "$f")" "$QUINTET_FAIL_RENDER_CAP"
+            _quintet_clean_answer "$(cat "$f"; [[ -s "${f%.out}.err" ]] && { printf '\n[stderr]\n'; cat "${f%.out}.err"; })" "$QUINTET_FAIL_RENDER_CAP"
         fi
         echo
     done
@@ -470,6 +472,8 @@ quintet_fleet_parallel() {
         esac
     done
     [[ -n "$prov_arg" ]] || prov_arg="all"
+    # "-" reads the prompt from stdin (prompts too long for an argument).
+    [[ "$prompt" == "-" ]] && prompt="$(cat)"
     [[ -n "$prompt" ]] || die "fleet: missing prompt"
     local -a plist=()
     _quintet_resolve_providers plist "$prov_arg"
@@ -505,6 +509,7 @@ quintet_fleet_review() {
         esac
     done
     [[ -n "$prov_arg" ]] || prov_arg="all"
+    [[ "$target" == "-" ]] && target="$(cat)"
     [[ -n "$target" ]] || die "fleet review: missing target (a diff, file path, or description)"
     local prompt
     prompt="You are performing a focused code review. Identify correctness bugs, security issues, and risky patterns. Be specific (file:line where possible) and rank findings by severity. Do not restate the code. Review target:
@@ -539,6 +544,7 @@ quintet_fleet_debate() {
         esac
     done
     [[ -n "$prov_arg" ]] || prov_arg="all"
+    [[ "$question" == "-" ]] && question="$(cat)"
     [[ -n "$question" ]] || die "fleet debate: missing question"
 
     # Seconds-resolution ts alone can collide if two debates start in the same

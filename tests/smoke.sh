@@ -522,17 +522,53 @@ for _ in $(seq 1 20); do fleet_sessions >/dev/null || break; sleep 0.25; done
 # process group, so the group signal hits it like a terminal's Ctrl-C; perl resets
 # the SIGINT disposition that a background child of a non-interactive shell inherits
 # as "ignored", which bash can't trap.
-ff setsid perl -e '$SIG{INT}="DEFAULT"; exec @ARGV' env QUINTET_CLAUDE_ONESHOT_CMD='trap "" INT; setsid sleep 3171' "$BIN" fleet --no-tmux "hi" claude >/dev/null 2>&1 &
+# perl records its own pid before exec'ing the fleet: under setsid that pid is the
+# fleet's process group. Never derive the group from the stub's parent: once the
+# fleet subshell exits, the stub is reparented to `systemd --user`, and signalling
+# that group logs the desktop session out (happened twice on 2026-10-05).
+a3pidf="$F/a3.pid"; rm -f "$a3pidf"
+a3mark="a3-marker-$$-$RANDOM"
+ff env A3_PIDF="$a3pidf" setsid perl -e '$SIG{INT}="DEFAULT"; open(my $f, ">", $ENV{A3_PIDF}) or die; print $f $$; close $f; exec @ARGV' env QUINTET_CLAUDE_ONESHOT_CMD='trap "" INT; setsid -w sleep 3171' "$BIN" fleet --no-tmux "$a3mark" claude >/dev/null 2>&1 &
 bg=$!
 for _ in $(seq 1 40); do pgrep -f "sleep 317[1]" >/dev/null && break; sleep 0.25; done
 sleep 1
-a3stub="$(pgrep -f 'sleep 317[1]' | head -1)"   # its parent is a fleet subshell, in the fleet's group
-a3pg="$(ps -o pgid= -p "$(ps -o ppid= -p "$a3stub" 2>/dev/null | tr -d ' ')" 2>/dev/null | tr -d ' ')"
-[[ -n "$a3pg" && "$a3pg" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]] && kill -INT -- "-$a3pg" 2>/dev/null
+a3pg="$(cat "$a3pidf" 2>/dev/null)"
+# Allowlist: signal the group only if its leader is this test's fleet (its argv
+# carries this run's marker), it leads its own group, and it isn't this shell's
+# group. A reused pid or any other group fails the check and gets no signal.
+if [[ "$a3pg" =~ ^[0-9]+$ && "$a3pg" -gt 1 \
+      && "$(ps -o pgid= -p "$a3pg" 2>/dev/null | tr -d ' ')" == "$a3pg" \
+      && "$a3pg" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]] \
+   && tr '\0' ' ' < "/proc/$a3pg/cmdline" 2>/dev/null | grep -qF -- "$a3mark"; then
+  kill -INT -- "-$a3pg" 2>/dev/null
+fi
 wait "$bg" 2>/dev/null
 for _ in $(seq 1 20); do pgrep -f "sleep 317[1]" >/dev/null || break; sleep 0.25; done
 pgrep -f "sleep 317[1]" >/dev/null && { pkill -f "sleep 317[1]"; bad "SIGINT in a --no-tmux fleet leaves no stub process (A3)"; } || ok "SIGINT in a --no-tmux fleet leaves no stub process (A3)"
 [[ -z "$(find "$F/tmp" -mindepth 1 -name 'quintet-*' 2>/dev/null)" ]] && ok "SIGINT in a --no-tmux fleet leaves no run dir, env dir or errfile (A3)" || bad "SIGINT in a --no-tmux fleet leaves no run dir, env dir or errfile (A3)"
+
+# 1.1: claude gets the prompt on stdin, not in argv.
+printf '#!/bin/bash\necho "args=$# argv=$* stdin=$(cat)"\n' > "$F/bin/claude"
+out=$(ff env QUINTET_ADVISORY_PREAMBLE= "$BIN" fleet --no-tmux "stdin-marker-11" claude 2>&1)
+echo "$out" | grep -q "args=1 argv=-p stdin=stdin-marker-11" && ok "claude one-shot reads the prompt on stdin, not argv (1.1)" || bad "claude one-shot reads the prompt on stdin, not argv (1.1)"
+printf '#!/bin/bash\necho "stub claude answer"\n' > "$F/bin/claude"
+out=$(ff bash -c 'source "$1/lib/common.sh"; source "$1/lib/providers.sh"; source "$1/lib/reliability.sh"
+    quintet_provider_oneshot agy "$(head -c 150000 /dev/zero | tr "\0" x)"; echo "rc=$?"' _ "$ROOT" 2>&1)
+echo "$out" | grep -q "prompt too large for agy" && echo "$out" | grep -q "rc=2" && [[ "$(ff bash -c 'source "$1/lib/common.sh"; source "$1/lib/reliability.sh"; classify_error 2 "$2"' _ "$ROOT" "$out")" == permanent ]] \
+    && ok "argv provider refuses a 150 KB prompt as a permanent failure (1.1)" || bad "argv provider refuses a 150 KB prompt as a permanent failure (1.1)"
+
+# 1.2: a CLI that ignores TERM is killed at timeout + grace, with nothing left.
+t0=$(date +%s)
+out=$(ff env QUINTET_CLAUDE_TIMEOUT=1 QUINTET_KILL_GRACE=2 QUINTET_CLAUDE_ONESHOT_CMD='trap "" TERM; sleep 4181' "$BIN" fleet --no-tmux "hi" claude 2>&1)
+el=$(( $(date +%s) - t0 ))
+[[ $el -lt 8 ]] && echo "$out" | grep -q "claude   \[124:" && ! pgrep -x -f "sleep 4181" >/dev/null && ok "TERM-ignoring CLI killed at timeout+grace, none left (${el}s, 1.2)" || { pkill -x -f "sleep 4181"; bad "TERM-ignoring CLI killed at timeout+grace, none left (${el}s, 1.2)"; }
+
+# 1.3: a leftover child doesn't hold the fleet open; stderr stays out of the answer.
+t0=$(date +%s)
+out=$(ff env QUINTET_CLAUDE_ONESHOT_CMD='echo warn-noise >&2; echo quick-ans-13; (sleep 4182) & exit 0' "$BIN" fleet "hi" claude 2>/dev/null)
+el=$(( $(date +%s) - t0 ))
+[[ $el -lt 10 ]] && echo "$out" | grep -q "quick-ans-13" && ! echo "$out" | grep -q "warn-noise" && ! pgrep -x -f "sleep 4182" >/dev/null && ok "leftover child doesn't hold the fleet; stderr not in answer (${el}s, 1.3)" || { pkill -x -f "sleep 4182"; bad "leftover child doesn't hold the fleet; stderr not in answer (${el}s, 1.3)"; }
+
 
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
@@ -543,7 +579,13 @@ echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:
 # shell's group (workers start under env -i, so TMUX_PANE can't be the guard).
 t0=$(date +%s)
 smoke_pgid="$(ps -o pgid= -p $$ | tr -d ' ')"
-out=$(ff env QUINTET_TIMEOUT=20 QUINTET_TEST_SMOKE_PGID="$smoke_pgid" QUINTET_CLAUDE_ONESHOT_CMD='[ "$(ps -o pgid= -p $$ | tr -d " ")" != "$QUINTET_TEST_SMOKE_PGID" ] && kill -KILL 0; exit 1' "$BIN" fleet "hi" claude 2>&1)
+# The CLI runs in its own process group (1.2), so the stub kills its parent's
+# group: the pane's worker. Allowlist: the group must be led by a pane on this
+# run's test tmux socket (pane pid == pane's pgid). Anything else, including a
+# group the stub was reparented into, gets no signal and the test fails.
+a6sock="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET"
+a6cmd="pg=\$(ps -o pgid= -p \$PPID | tr -d ' '); [ -n \"\$pg\" ] && [ \"\$pg\" -gt 1 ] && [ \"\$pg\" != $(printf '%q' "$smoke_pgid") ] && $(printf '%q' "$(command -v tmux)") -S $(printf '%q' "$a6sock") list-panes -a -F '#{pane_pid}' 2>/dev/null | grep -qx -- \"\$pg\" && kill -KILL -- -\$pg; exit 1"
+out=$(ff env QUINTET_TIMEOUT=20 QUINTET_CLAUDE_ONESHOT_CMD="$a6cmd" "$BIN" fleet "hi" claude 2>&1)
 el=$(( $(date +%s) - t0 ))
 [[ $el -lt 12 ]] && echo "$out" | grep -q "worker-crashed" && ok "crashed fleet worker detected early (${el}s, A6)" || bad "crashed fleet worker detected early (${el}s, A6)"
 echo "$out" | grep -qF "$(quintet_provider_emoji codex) codex (fallback for claude)" && ok "fallback runs after a crashed worker" || bad "fallback runs after a crashed worker"
