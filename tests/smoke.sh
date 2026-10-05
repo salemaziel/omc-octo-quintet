@@ -1269,16 +1269,21 @@ out=$(q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub rs)" "$BIN" team restar
     && ok "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)" || bad "team restart respawns an exited worker, re-sends its kickoff, refuses a live one (5.1)"
 q2 "$BIN" team shutdown "rs-$$" --force >/dev/null 2>&1
 
-# 5.3: --graceful=N types the stop request, waits (an idle worker ends the wait
-# early), reports STOPPED lines, then kills the session. A bad N is refused.
+# 5.3: --graceful=N types the stop request; the worker's new STOPPED line ends
+# the wait early (an older one doesn't count), then the session is killed.
+# 09 checks N isn't read as octal; a bad N is refused.
 q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub gs)" "$BIN" team 1:claude "t" --name "gs-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+gsb="$Q2/state/teams/gs-$$/taskboard.md"
+echo "[w1-claude] STOPPED: old-run-53" >> "$gsb"
 out2=$(q2 "$BIN" team shutdown "gs-$$" --graceful=x 2>&1); rc2=$?
+( sleep 3; echo "[w1-claude] STOPPED: new-run-53" >> "$gsb" ) &
 t0=$(date +%s)
-out=$(q2 "$BIN" team shutdown "gs-$$" --graceful=20 2>&1); rc=$?
-el=$(( $(date +%s) - t0 ))
-[[ $rc -eq 0 && $rc2 -ne 0 && $el -lt 12 ]] && echo "$out2" | grep -q "whole seconds" && grep -q "^Stop now: .*'\[w1-claude\] STOPPED" "$Q2/gs.log" \
-    && echo "$out" | grep -q "0 of 1 worker(s) wrote a STOPPED line" && ! ttmux has-session -t "=quintet-gs-$$" 2>/dev/null \
-    && ok "shutdown --graceful asks, ends the wait once idle, then kills (${el}s, 5.3)" || bad "shutdown --graceful asks, ends the wait once idle, then kills (${el}s, 5.3)"
+out=$(q2 "$BIN" team shutdown "gs-$$" --graceful=09 2>&1); rc=$?
+el=$(( $(date +%s) - t0 )); wait
+[[ $rc -eq 0 && $rc2 -ne 0 && $el -le 7 ]] && echo "$out2" | grep -q "whole seconds" && grep -q "^Stop now: .*'\[w1-claude\] STOPPED" "$Q2/gs.log" \
+    && echo "$out" | grep -q "1 of 1 worker(s) wrote a STOPPED line" && echo "$out" | grep -q "new-run-53" && ! echo "$out" | grep -q "old-run-53" \
+    && ! ttmux has-session -t "=quintet-gs-$$" 2>/dev/null \
+    && ok "shutdown --graceful asks, a new STOPPED line ends the wait, then kills (${el}s, 5.3)" || bad "shutdown --graceful asks, a new STOPPED line ends the wait, then kills (${el}s, 5.3)"
 rm -rf "$Q2"
 
 rm -rf "$QCWD"

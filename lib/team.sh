@@ -766,13 +766,18 @@ quintet_team_send() {
 }
 
 # _quintet_team_graceful <name> <secs> — ask each live worker (no dialog up) to
-# stop and note where it got to on the taskboard, then wait until every asked
-# worker is idle on two checks in a row (or has exited), at most <secs> seconds.
+# stop and write a STOPPED line on the taskboard, then wait at most <secs>
+# seconds (counted from the first request) until each asked worker is done:
+# it wrote a new STOPPED line, or exited, or was seen busy and has since been
+# idle on two checks in a row. Idle alone isn't enough: a CLI can look idle
+# before it has picked up the request. A worker showing a dialog is not done.
 _quintet_team_graceful() {
-    local name="$1" secs="$2" w modal rc end quiet=0 busy
+    local name="$1" secs="$2" w modal rc end i base pending
     local board; board="$(_quintet_team_dir "$name")/taskboard.md"
     local sess; sess="$(quintet_tmux_session "$name")"
-    local -a asked=()
+    local -a asked=() seen_busy=() quiet=() done_w=() warned=()
+    base=0; [[ -f "$board" ]] && base="$(wc -l < "$board")"
+    end=$(( $(now_epoch) + 10#$secs ))
     while IFS= read -r w; do
         [[ -n "$w" ]] || continue
         [[ "$(quintet_tmux_liveness "=${sess}:=${w}")" == alive ]] || continue
@@ -785,17 +790,36 @@ _quintet_team_graceful() {
     done < <(quintet_window_list "$name")
     [[ ${#asked[@]} -ge 1 ]] || { log WARN "graceful: no worker could be asked to stop"; return 0; }
     log INFO "graceful: asked ${#asked[@]} worker(s) to stop; waiting up to ${secs}s"
-    end=$(( $(now_epoch) + secs ))
+    local new=""
     while (( $(now_epoch) < end )); do
         sleep 2
-        busy=0
-        for w in "${asked[@]}"; do
-            [[ "$(quintet_tmux_liveness "=${sess}:=${w}")" == alive ]] && _quintet_worker_busy "$name" "$w" && { busy=1; break; }
+        new=""; [[ -f "$board" ]] && new="$(tail -n "+$((base + 1))" "$board" 2>/dev/null)"
+        pending=0
+        for i in "${!asked[@]}"; do
+            [[ -n "${done_w[i]:-}" ]] && continue
+            w="${asked[i]}"
+            if grep -qF "[${w}] STOPPED" <<< "$new" || [[ "$(quintet_tmux_liveness "=${sess}:=${w}")" != alive ]]; then
+                done_w[i]=1; continue
+            fi
+            if modal="$(_quintet_detect_worker_modal "$name" "$w")"; then
+                [[ -n "${warned[i]:-}" ]] || log WARN "graceful: ${w} is showing a dialog (${modal}); it can't finish until that is answered"
+                warned[i]=1; quiet[i]=0; pending=1; continue
+            fi
+            if _quintet_worker_busy "$name" "$w"; then
+                seen_busy[i]=1; quiet[i]=0
+            else
+                quiet[i]=$(( ${quiet[i]:-0} + 1 ))
+                [[ -n "${seen_busy[i]:-}" ]] && (( quiet[i] >= 2 )) && { done_w[i]=1; continue; }
+            fi
+            pending=1
         done
-        if (( busy )); then quiet=0; else quiet=$((quiet + 1)); (( quiet >= 2 )) && break; fi
+        (( pending )) || break
     done
-    local n=0; [[ -f "$board" ]] && n="$(grep -c '\] STOPPED' "$board" 2>/dev/null)"
-    log INFO "graceful: ${n:-0} of ${#asked[@]} worker(s) wrote a STOPPED line"
+    local stopped
+    stopped="$(grep -F '] STOPPED' <<< "$new" | grep -cF -f <(printf '[%s] STOPPED\n' "${asked[@]}"))"
+    log INFO "graceful: ${stopped:-0} of ${#asked[@]} worker(s) wrote a STOPPED line"
+    grep -F -f <(printf '[%s] STOPPED\n' "${asked[@]}") <<< "$new" | sed 's/^/    /' >&2
+    return 0
 }
 
 quintet_team_shutdown() {
