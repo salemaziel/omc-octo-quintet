@@ -29,26 +29,28 @@ echo "── 2. cli surface ──"
 echo "── 2b. agy provider & alias resolution ──"
 source "${ROOT}/lib/common.sh"
 source "${ROOT}/lib/providers.sh"
+source "${ROOT}/lib/roles.sh"
 source "${ROOT}/lib/team.sh"
 source "${ROOT}/lib/fleet.sh"
-[[ "$(_quintet_parse_spec "1:gemini")" == "agy" ]] && ok "spec parses gemini -> agy" || bad "spec parses gemini -> agy"
-[[ "$(_quintet_parse_spec "1:agy")" == "agy" ]] && ok "spec parses agy" || bad "spec parses agy"
+[[ "$(_quintet_parse_spec "1:gemini")" == "agy:stock" ]] && ok "spec parses gemini -> agy:stock" || bad "spec parses gemini -> agy:stock"
+[[ "$(_quintet_parse_spec "1:agy")" == "agy:stock" ]] && ok "spec parses agy -> agy:stock" || bad "spec parses agy -> agy:stock"
 [[ "$(quintet_provider_bin "agy")" == "agy" ]] && ok "bin for agy is agy" || bad "bin for agy is agy"
 [[ "$(quintet_provider_bin "gemini")" == "agy" ]] && ok "bin for gemini alias is agy" || bad "bin for gemini alias is agy"
 
 echo "── 2c. opencode provider & spec resolution ──"
-[[ "$(_quintet_parse_spec "1:opencode")" == "opencode" ]] && ok "spec parses opencode" || bad "spec parses opencode"
+[[ "$(_quintet_parse_spec "1:opencode")" == "opencode:stock" ]] && ok "spec parses opencode -> opencode:stock" || bad "spec parses opencode -> opencode:stock"
 [[ "$(quintet_provider_bin "opencode")" == "opencode" ]] && ok "bin for opencode is opencode" || bad "bin for opencode is opencode"
 [[ "$(quintet_provider_emoji "opencode")" == "🟧" ]] && ok "emoji for opencode is 🟧" || bad "emoji for opencode is 🟧"
 [[ "$(quintet_provider_launch_cmd "opencode")" == "opencode --auto" ]] && ok "launch cmd for opencode is opencode --auto" || bad "launch cmd for opencode"
 
 echo "── 2d. subagent roles ──"
-source "${ROOT}/lib/roles.sh"
 quintet_role_exists "implementer" && ok "role exists: implementer" || bad "role exists: implementer"
 quintet_role_exists "stock" && ok "role exists: stock" || bad "role exists: stock"
 quintet_role_exists "nonexistent_role" && bad "nonexistent role should not exist" || ok "nonexistent role rejected"
 [[ -n "$(quintet_role_prompt "implementer")" ]] && ok "role prompt returned for implementer" || bad "role prompt returned for implementer"
 [[ -z "$(quintet_role_prompt "stock")" ]] && ok "role prompt empty for stock" || bad "role prompt empty for stock"
+[[ "$(_quintet_parse_spec "1:agy:implementer")" == "agy:implementer" ]] && ok "spec parses 1:agy:implementer" || bad "spec parses 1:agy:implementer"
+[[ "$(_quintet_parse_spec "2:codex:reviewer")" == $'codex:code-reviewer\ncodex:code-reviewer' ]] && ok "spec parses 2:codex:reviewer with alias" || bad "spec parses 2:codex:reviewer with alias"
 
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
@@ -57,13 +59,15 @@ else
     export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"
-    "$BIN" team 2:claude "smoke" --name "$T" --cwd /tmp >/dev/null 2>&1 && ok "team start" || bad "team start"
+    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp >/dev/null 2>&1 && ok "team start" || bad "team start"
     sleep 3
     "$BIN" team status "$T" >/dev/null 2>&1 && ok "team status" || bad "team status"
     marker="/tmp/quintet-smoke-$$.txt"; rm -f "$marker"
-    "$BIN" team send "$T" "w1-claude" "echo OK > $marker" >/dev/null 2>&1
+    "$BIN" team send "$T" "w1-claude-implementer" "echo OK > $marker" >/dev/null 2>&1
     sleep 2
     [[ -f "$marker" ]] && ok "worker executed injected task" || bad "worker executed injected task"
+    grep -E -q '"role"[[:space:]]*:[[:space:]]*"implementer"' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records role" || bad "manifest records role"
+    grep -q 'role: implementer' "${QUINTET_STATE_DIR}/teams/${T}/taskboard.md" 2>/dev/null && ok "taskboard records role" || bad "taskboard records role"
     [[ -f "${QUINTET_STATE_DIR}/teams/${T}/team.json" ]] && ok "manifest written" || bad "manifest written"
     "$BIN" team shutdown "$T" --force >/dev/null 2>&1 && ok "team shutdown" || bad "team shutdown"
     tmux has-session -t "quintet-$T" 2>/dev/null && bad "session cleaned" || ok "session cleaned"

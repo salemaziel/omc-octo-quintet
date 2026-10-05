@@ -8,25 +8,49 @@
 # team manifest plus a shared task board the orchestrating Claude can read/write.
 # ─────────────────────────────────────────────────────────────────────────────
 
+if ! declare -f quintet_role_exists >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "${QUINTET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/lib/roles.sh"
+fi
+
 _quintet_team_dir() { echo "${QUINTET_STATE_DIR}/teams/$1"; }
 
-# Parse a team spec like "2:claude,1:qwen,1:copilot" into a flat worker list.
-# Echoes one provider per line (so 2:claude -> two "claude" lines). Validates each.
+# Parse a team spec like "2:claude,1:qwen,1:copilot" or "1:codex:implementer,1:agy:stock"
+# into a flat worker list. Echoes "provider:role" per line. Validates each.
 _quintet_parse_spec() {
-    local spec="$1" tok n provider i
+    local spec="$1" tok n provider role i parts
     IFS=',' read -ra _toks <<< "$spec"
     for tok in "${_toks[@]}"; do
         tok="${tok// /}"
         [[ -z "$tok" ]] && continue
-        if [[ "$tok" == *:* ]]; then
-            n="${tok%%:*}"; provider="${tok##*:}"
-        else
-            n=1; provider="$tok"
+        IFS=':' read -ra parts <<< "$tok"
+        if [[ "${#parts[@]}" -eq 1 ]]; then
+            n=1
+            provider="${parts[0]}"
+            role="stock"
+        elif [[ "${#parts[@]}" -eq 2 ]]; then
+            if [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then
+                n="${parts[0]}"
+                provider="${parts[1]}"
+                role="stock"
+            else
+                n=1
+                provider="${parts[0]}"
+                role="${parts[1]}"
+            fi
+        elif [[ "${#parts[@]}" -ge 3 ]]; then
+            n="${parts[0]}"
+            provider="${parts[1]}"
+            role="${parts[2]}"
         fi
+
         [[ "$provider" == "gemini" ]] && provider="agy"
-        [[ "$n" =~ ^[0-9]+$ ]] || die "bad spec count in '$tok' (use N:provider)"
+        [[ "$n" =~ ^[0-9]+$ ]] || die "bad spec count in '$tok' (use N:provider or N:provider:role)"
         quintet_provider_validate "$provider"
-        for ((i=0; i<n; i++)); do echo "$provider"; done
+        role="$(quintet_normalize_role "$role")"
+        quintet_role_exists "$role" || die "unknown role: '$role' in '$tok'"
+
+        for ((i=0; i<n; i++)); do echo "${provider}:${role}"; done
     done
 }
 
@@ -94,27 +118,46 @@ quintet_team_start() {
     local worker_json="" idx=1
     quintet_session_create "$name" "$cwd"
 
-    local provider worker_name wtask
-    for provider in "${workers[@]}"; do
-        worker_name="w${idx}-${provider}"
+    local worker_entry provider role worker_name wtask role_prompt
+    for worker_entry in "${workers[@]}"; do
+        provider="${worker_entry%%:*}"
+        role="${worker_entry#*:}"
+        [[ "$role" == "$worker_entry" ]] && role="stock"
+
+        if [[ "$role" == "stock" ]]; then
+            worker_name="w${idx}-${provider}"
+        else
+            worker_name="w${idx}-${provider}-${role}"
+        fi
+
         # Choose this worker's task: distinct subtask if provided, else shared goal.
         if [[ "${#subtasks[@]}" -ge "$idx" ]]; then
             wtask="${subtasks[$((idx-1))]}"
         else
             wtask="$task"
         fi
+
+        # Resolve role instructions if defined
+        role_prompt="$(quintet_role_prompt "$role")"
+        local role_block=""
+        if [[ -n "$role_prompt" ]]; then
+            role_block="${role_prompt}
+
+"
+        fi
+
         # The full instruction injected into the agent REPL.
         local injected
-        injected="You are ${worker_name}, a worker in quintet team '${name}'. Working dir: ${cwd}. \
+        injected="${role_block}You are ${worker_name}, a worker in quintet team '${name}' (role: ${role}). Working dir: ${cwd}. \
 Shared team goal: ${task} \
 Your assignment: ${wtask} \
 Coordinate by appending status to ${board} (one line, prefixed with [${worker_name}]). \
 Avoid editing files another worker owns. When done, write a final [${worker_name}] DONE line to the taskboard."
 
-        log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider)"
+        log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
         quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider")" || continue
-        echo "- **${worker_name}** ($provider): ${wtask}" >> "$board"
-        worker_json="${worker_json}${worker_json:+,}{\"name\":\"${worker_name}\",\"provider\":\"${provider}\"}"
+        echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
+        worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}")}"
 
         # Defer task injection: warm up the REPL first, then send.
         ( sleep "$(quintet_provider_warmup "$provider")"; quintet_window_send "$name" "$worker_name" "$injected" ) &
@@ -134,6 +177,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
 
     wait   # let deferred task injections finish before returning
     log INFO "team '$name' started with ${#workers[@]} worker(s). Attach: tmux attach -t $(quintet_tmux_session "$name")"
+    printf "Tmux session: tmux attach -t %s\n" "$(quintet_tmux_session "$name")" >&2
     echo "$name"
 }
 
