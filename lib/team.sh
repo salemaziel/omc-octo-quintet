@@ -18,7 +18,8 @@ _quintet_team_dir() { echo "${QUINTET_STATE_DIR}/teams/$1"; }
 # Parse a team spec like "2:claude,1:qwen,1:copilot" or "1:codex:implementer,1:agy:stock"
 # into a flat worker list. Echoes "provider:role" per line. Validates each.
 _quintet_parse_spec() {
-    local spec="$1" tok n provider role model i parts
+    local spec="$1" tok n provider role model i
+    local -a _toks=() parts=()
     IFS=',' read -ra _toks <<< "$spec"
     for tok in "${_toks[@]}"; do
         tok="${tok// /}"
@@ -49,11 +50,13 @@ _quintet_parse_spec() {
                 role="${parts[1]}"
                 model="${parts[2]}"
             fi
-        elif [[ "${#parts[@]}" -ge 4 ]]; then
+        elif [[ "${#parts[@]}" -eq 4 ]]; then
             n="${parts[0]}"
             provider="${parts[1]}"
             role="${parts[2]}"
             model="${parts[3]}"
+        else
+            die "too many fields in '$tok' (max 4: N:provider:role:model; for models containing ':' use --model)"
         fi
 
         [[ "$provider" == "gemini" ]] && provider="agy"
@@ -83,18 +86,20 @@ quintet_team_start() {
     local safe_mode="${QUINTET_SAFE_MODE:-false}"
 
     # First two positionals are spec + task; rest are flags.
+    [[ $# -ge 1 ]] || die "team start: missing spec (e.g. 2:claude,1:qwen)"
     spec="$1"; shift
+    [[ $# -ge 1 ]] || die "team start: missing task description"
     task="$1"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --cwd)              cwd="$2"; shift 2 ;;
-            --name)             name="$2"; shift 2 ;;
-            --tasks)            tasks_blob="$2"; shift 2 ;;
+            --cwd)              need_arg "$1" $#; cwd="$2"; shift 2 ;;
+            --name)             need_arg "$1" $#; name="$2"; quintet_validate_team_name "$name"; shift 2 ;;
+            --tasks)            need_arg "$1" $#; tasks_blob="$2"; shift 2 ;;
             --skip-auth-check)  skip_auth=true; shift ;;
             --no-mcp)           no_mcp=true; shift ;;
             --safe)             safe_mode=true; shift ;;
-            --model)            team_model="$2"; shift 2 ;;
-            --effort)           team_effort="$2"; shift 2 ;;
+            --model)            need_arg "$1" $#; team_model="$2"; shift 2 ;;
+            --effort)           need_arg "$1" $#; team_effort="$2"; shift 2 ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
@@ -103,8 +108,12 @@ quintet_team_start() {
     [[ -d "$cwd" ]]  || die "team start: --cwd not a directory: $cwd"
     cwd="$(cd "$cwd" && pwd)"
 
+    # Parse in a command substitution and check its status: a die() inside the
+    # parser only exits that subshell, so a bad later token must abort here.
+    local parsed
+    parsed="$(_quintet_parse_spec "$spec")" || exit 1
     local -a workers=()
-    mapfile -t workers < <(_quintet_parse_spec "$spec")
+    [[ -n "$parsed" ]] && mapfile -t workers <<< "$parsed"
     [[ "${#workers[@]}" -ge 1 ]] || die "team start: spec produced zero workers"
     [[ "${#workers[@]}" -le 10 ]] || die "team start: max 10 workers (got ${#workers[@]})"
 
@@ -124,6 +133,7 @@ quintet_team_start() {
 
     [[ -z "$name" ]] && name="$(slugify "$task")"
     [[ -z "$name" ]] && name="team-$(now_epoch)"
+    quintet_validate_team_name "$name"
 
     if quintet_session_exists "$name"; then
         die "team '$name' already running. Use: quintet team status $name (or shutdown $name --force)"
@@ -254,7 +264,8 @@ _quintet_detect_worker_modal() {
 }
 
 quintet_team_status() {
-    local name="$1"; [[ -n "$name" ]] || die "team status: missing team name"
+    local name="${1:-}"; [[ -n "$name" ]] || die "team status: missing team name"
+    quintet_validate_team_name "$name"
     if ! quintet_session_exists "$name"; then
         log WARN "team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"
         return 1
@@ -282,7 +293,8 @@ quintet_team_status() {
 }
 
 quintet_team_doctor() {
-    local name="$1"; [[ -n "$name" ]] || die "team doctor: missing team name"
+    local name="${1:-}"; [[ -n "$name" ]] || die "team doctor: missing team name"
+    quintet_validate_team_name "$name"
     if ! quintet_session_exists "$name"; then
         echo "❌ Team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"
         return 1
@@ -318,8 +330,9 @@ quintet_team_doctor() {
 }
 
 quintet_team_capture() {
-    local name="$1" worker="${2:-}" lines="${3:-40}"
+    local name="${1:-}" worker="${2:-}" lines="${3:-40}"
     [[ -n "$name" ]] || die "team capture: missing team name"
+    quintet_validate_team_name "$name"
     quintet_session_exists "$name" || die "team '$name' is not running"
     if [[ -n "$worker" ]]; then
         quintet_window_capture "$name" "$worker" "$lines"
@@ -335,16 +348,18 @@ quintet_team_capture() {
 }
 
 quintet_team_send() {
-    local name="$1" worker="$2" text="$3"
+    local name="${1:-}" worker="${2:-}" text="${3:-}"
     [[ -n "$name" && -n "$worker" && -n "$text" ]] || die "usage: quintet team send <name> <worker> <text>"
+    quintet_validate_team_name "$name"
     quintet_session_exists "$name" || die "team '$name' is not running"
     quintet_window_send "$name" "$worker" "$text"
     log INFO "sent to ${name}/${worker}"
 }
 
 quintet_team_shutdown() {
-    local name="$1" force="${2:-}"
+    local name="${1:-}" force="${2:-}"
     [[ -n "$name" ]] || die "team shutdown: missing team name"
+    quintet_validate_team_name "$name"
     if ! quintet_session_exists "$name"; then
         log WARN "team '$name' has no live session; cleaning state only"
     fi

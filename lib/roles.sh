@@ -29,15 +29,20 @@ quintet_normalize_role() {
     esac
 }
 
+# Directory holding role prompt files; anchored to this file's location when
+# QUINTET_ROOT is unset (never relative to the caller's $PWD).
+_quintet_roles_dir() {
+    echo "${QUINTET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/roles"
+}
+
 # quintet_role_exists <role>
-# Returns 0 if role is "stock" or has a corresponding role definition.
+# Returns 0 if role is "stock" or a plain name ([a-z0-9-]+) with a roles/<r>.md file.
 quintet_role_exists() {
     local r
     r=$(quintet_normalize_role "$1")
     [[ "$r" == "stock" ]] && return 0
-    local file="${QUINTET_ROOT:-..}/roles/${r}.md"
-    [[ -f "$file" ]] && return 0
-    return 1
+    [[ "$r" =~ ^[a-z0-9-]+$ ]] || return 1
+    [[ -f "$(_quintet_roles_dir)/${r}.md" ]]
 }
 
 # quintet_role_prompt <role>
@@ -46,9 +51,8 @@ quintet_role_prompt() {
     local r
     r=$(quintet_normalize_role "$1")
     [[ "$r" == "stock" ]] && return 0
-    local file="${QUINTET_ROOT:-..}/roles/${r}.md"
-    if [[ -f "$file" ]]; then
-        cat "$file"
+    if quintet_role_exists "$r"; then
+        cat "$(_quintet_roles_dir)/${r}.md"
     else
         log WARN "unknown role '$1'; falling back to stock baseline"
         return 0

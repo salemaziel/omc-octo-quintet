@@ -20,7 +20,10 @@ quintet_prune() {
     local days=7 dry_run=false force=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --days)     days="$2"; shift 2 ;;
+            --days)
+                need_arg "$1" $#
+                [[ "$2" =~ ^[0-9]{1,6}$ ]] || die "--days requires a nonnegative decimal integer (max 6 digits), got '$2'"
+                days=$((10#$2)); shift 2 ;;
             --dry-run)  dry_run=true; shift ;;
             --force|-f) force=true; shift ;;
             *) die "unknown prune flag: $1" ;;

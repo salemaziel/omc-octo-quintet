@@ -50,6 +50,16 @@ log() {
 
 die() { log ERROR "$*"; exit 1; }
 
+# need_arg <flag> <argc> — die unless a value follows <flag> (call with "$#").
+need_arg() { [[ "$2" -ge 2 ]] || die "$1 requires a value"; }
+
+# quintet_validate_team_name <name> — team names become tmux session names and
+# state dir names, so only a safe, tmux-stable subset is allowed (no '.', ':', '/').
+quintet_validate_team_name() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] \
+        || die "invalid team name '${1:-}': must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\$ (letter/digit first, then letters, digits, '_' or '-'; max 64 chars)"
+}
+
 # ── String / slug helpers ──────────────────────────────────────────────────────
 # Turn arbitrary task text into a short, filesystem-safe team-name slug.
 slugify() {

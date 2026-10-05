@@ -161,6 +161,90 @@ if command -v tmux >/dev/null 2>&1; then
     echo "$out_tmux" | grep -q "Tmux session:" && ok "fleet outputs tmux attach command" || bad "fleet outputs tmux attach command"
 fi
 
+echo "── 5. input validation & argument guards ──"
+V="$(mktemp -d)"
+export QUINTET_STATE_DIR="$V/proj/.quintet"
+mkdir -p "$QUINTET_STATE_DIR/teams" "$QUINTET_STATE_DIR/x"
+export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
+# no_sessions <pattern> — true if no session on the test socket matches.
+no_sessions() { ! ttmux list-sessions -F '#{session_name}' 2>/dev/null | grep -q -- "$1"; }
+
+# M7 / C6: a bad later token must abort the whole team (no partial start).
+out=$("$BIN" team 1:claude,1:codex:a:b:c "t" --name "smoke-spec5-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "too many fields" && ok "team spec with 5 fields dies" || bad "team spec with 5 fields dies"
+no_sessions "smoke-spec5-$$" && ok "no session after 5-field spec" || bad "no session after 5-field spec"
+out=$("$BIN" team 1:claude,1:bogus "t" --name "smoke-bogus-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "unsupported provider" && ok "team spec with bogus provider dies" || bad "team spec with bogus provider dies"
+no_sessions "smoke-bogus-$$" && ok "no session after bogus-provider spec" || bad "no session after bogus-provider spec"
+( _quintet_parse_spec "1:codex:stock:model:extra" ) >/dev/null 2>&1 && bad "parser rejects 5 fields" || ok "parser rejects 5 fields"
+[[ "$(_quintet_parse_spec "1:claude:stock:haiku")" == "claude:stock:haiku" ]] && ok "parser keeps 4 fields" || bad "parser keeps 4 fields"
+
+# A1 / A3: team names are validated everywhere.
+out=$("$BIN" team shutdown ../x --force 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid team name" && ok "shutdown ../x --force dies" || bad "shutdown ../x --force dies"
+[[ -d "$QUINTET_STATE_DIR/x" ]] && ok "traversal target survives shutdown" || bad "traversal target survives shutdown"
+for sub in status doctor capture send; do
+    "$BIN" team "$sub" ../x w1 hi >/dev/null 2>&1; rc=$?
+    [[ $rc -eq 1 ]] && ok "team $sub rejects ../x" || bad "team $sub rejects ../x"
+done
+long_name="$(printf 'a%.0s' {1..65})"
+for bad_name in "a.b" "a:b" "$long_name" "-lead"; do
+    out=$("$BIN" team 1:claude "t" --name "$bad_name" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+    [[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid team name" && ok "--name '${bad_name:0:12}' rejected" || bad "--name '${bad_name:0:12}' rejected"
+done
+no_sessions "quintet-a" && ok "no session for rejected names" || bad "no session for rejected names"
+
+# M2: missing positionals / flag values give clean errors (no set -u crash).
+out=$("$BIN" team 1:claude 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "missing task" && ! echo "$out" | grep -q "unbound variable" && ok "team without task: clean 'missing task'" || bad "team without task: clean 'missing task'"
+out=$("$BIN" team 1:claude "t" --name 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q -- "--name requires a value" && ! echo "$out" | grep -q "unbound variable" && ok "team --name without value: clean error" || bad "team --name without value: clean error"
+for sub in fleet debate review; do
+    out=$("$BIN" "$sub" p codex --effort 2>&1); rc=$?
+    [[ $rc -eq 1 ]] && echo "$out" | grep -q -- "--effort requires a value" && ! echo "$out" | grep -q "unbound variable" && ok "$sub --effort without value: clean error" || bad "$sub --effort without value: clean error"
+done
+out=$("$BIN" fleet p codex --model 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q -- "--model requires a value" && ok "fleet --model without value: clean error" || bad "fleet --model without value: clean error"
+
+# A10: role names cannot traverse out of roles/.
+[[ -f "$ROOT/docs/superpowers/plans/2026-10-04-quintet-tmux-and-roles.md" ]] || bad "role traversal fixture missing"
+quintet_role_exists "../docs/superpowers/plans/2026-10-04-quintet-tmux-and-roles" && bad "role traversal rejected" || ok "role traversal rejected"
+quintet_role_exists "../docs/x" && bad "role ../docs/x rejected" || ok "role ../docs/x rejected"
+[[ -z "$(quintet_role_prompt "../docs/superpowers/plans/2026-10-04-quintet-tmux-and-roles" 2>/dev/null)" ]] && ok "role prompt refuses traversal" || bad "role prompt refuses traversal"
+(cd /tmp && unset QUINTET_ROOT && source "$ROOT/lib/roles.sh" && quintet_role_exists implementer) && ok "roles anchored to lib/ without QUINTET_ROOT" || bad "roles anchored to lib/ without QUINTET_ROOT"
+
+# C3: prune --days validation.
+mkdir -p "$V/prune/teams/dead-team-v"
+for dval in "-1" "abc" "" "1234567"; do
+    out=$(QUINTET_STATE_DIR="$V/prune" QUINTET_HOME="$V/home" "$BIN" prune --days "$dval" 2>&1); rc=$?
+    [[ $rc -eq 1 ]] && echo "$out" | grep -q -- "--days requires" && ok "prune --days '$dval' rejected" || bad "prune --days '$dval' rejected"
+done
+out=$(QUINTET_STATE_DIR="$V/prune" QUINTET_HOME="$V/home" "$BIN" prune --days 2>&1); rc=$?
+[[ $rc -eq 1 ]] && ! echo "$out" | grep -q "unbound variable" && ok "prune --days without value: clean error" || bad "prune --days without value: clean error"
+[[ -d "$V/prune/teams/dead-team-v" ]] && ok "rejected --days deleted nothing" || bad "rejected --days deleted nothing"
+out=$(QUINTET_STATE_DIR="$V/prune" QUINTET_HOME="$V/home" "$BIN" prune --days 0012 --dry-run 2>&1); rc=$?
+[[ $rc -eq 0 ]] && echo "$out" | grep -q "older than 12 day" && ok "prune --days 0012 is decimal 12" || bad "prune --days 0012 is decimal 12"
+
+# A12 / M1: fleet provider resolution and exit codes (stub CLIs, fake HOME).
+fh="$V/fakehome"; sb="$V/stubbin"; mkdir -p "$fh/.codex" "$sb"
+printf '#!/bin/sh\necho "stub provider must not run" >&2\nexit 99\n' > "$sb/codex"; chmod +x "$sb/codex"
+out=$(env -u OPENAI_API_KEY HOME="$fh" QUINTET_HOME="$fh/.quintet" "$BIN" fleet --no-tmux "hi" codex 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "no ready providers" && ok "fleet with zero ready providers exits 1" || bad "fleet with zero ready providers exits 1"
+out=$(HOME="$fh" QUINTET_HOME="$fh/.quintet" "$BIN" fleet --no-tmux "hi" 1:bogus 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "unsupported provider" && ok "fleet with unsupported provider exits 1" || bad "fleet with unsupported provider exits 1"
+out=$(HOME="$fh" QUINTET_HOME="$fh/.quintet" "$BIN" debate --no-tmux "hi" 1:bogus 2>&1); rc=$?
+[[ $rc -eq 1 ]] && ok "debate with unsupported provider exits 1" || bad "debate with unsupported provider exits 1"
+touch "$fh/.codex/auth.json"
+resolved=$(export PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet"; source "$ROOT/lib/reliability.sh"
+    declare -a rp=(); _quintet_resolve_providers rp "1:codex:implementer,codex:reviewer:o3"; echo "${rp[*]}")
+[[ "$resolved" == "codex codex" ]] && ok "fleet 1:codex:implementer resolves to codex" || bad "fleet 1:codex:implementer resolves to codex (got '$resolved')"
+out=$(PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet" QUINTET_CODEX_ONESHOT_CMD='echo "mock codex answer"' \
+    "$BIN" fleet --no-tmux "hi" 1:codex:implementer 2>&1); rc=$?
+[[ $rc -eq 0 ]] && echo "$out" | grep -q "mock codex answer" && ok "fleet runs N:provider:role token" || bad "fleet runs N:provider:role token"
+
+unset QUINTET_CLAUDE_LAUNCH QUINTET_CLAUDE_WARMUP QUINTET_STATE_DIR
+rm -rf "$V"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

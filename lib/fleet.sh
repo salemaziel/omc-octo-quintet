@@ -73,21 +73,32 @@ _quintet_answers_block() {
     done
 }
 
-# Resolve a provider list. Accepts "all", a spec, or explicit names.
-# Echoes ready providers (skips missing/unauthenticated/breaker-open), one per line.
+# Resolve a provider list into the array named by <outvar>. Accepts "all", a spec,
+# or explicit names. Keeps ready providers (skips missing/unauthenticated/
+# breaker-open). Must run in the caller's shell so an unsupported-provider die()
+# exits the command instead of a subshell.
+# Args: outvar provider-list-string
 _quintet_resolve_providers() {
-    local arg="$1" p
+    local -n _qrp_out="$1"
+    local arg="$2" p p_clean
     local -a candidates=()
+    _qrp_out=()
     if [[ -z "$arg" || "$arg" == "all" ]]; then
         candidates=("${QUINTET_PROVIDERS[@]}")
     else
-        # Comma or space separated; strip optional N: prefixes (fleet ignores counts).
+        # Comma or space separated tokens shaped [N:]provider[:role[:model]];
+        # fleet ignores counts/roles/models. Embedded --flags are handled by
+        # _quintet_fan_out, so skip them here.
         arg="${arg//,/ }"
         for p in $arg; do
-            local p_clean="${p##*:}"
+            [[ "$p" == --* ]] && continue
+            p_clean="$p"
+            [[ "$p_clean" =~ ^[0-9]+: ]] && p_clean="${p_clean#*:}"
+            p_clean="${p_clean%%:*}"
             [[ "$p_clean" == "gemini" ]] && p_clean="agy"
             candidates+=( "$p_clean" )
         done
+        [[ "${#candidates[@]}" -ge 1 ]] || candidates=("${QUINTET_PROVIDERS[@]}")
     fi
     for p in "${candidates[@]}"; do
         quintet_provider_validate "$p"
@@ -97,7 +108,7 @@ _quintet_resolve_providers() {
         if circuit_open "$p"; then
             log WARN "skipping $p (circuit breaker open — cooling down)"; continue
         fi
-        echo "$p"
+        _qrp_out+=( "$p" )
     done
 }
 
@@ -192,9 +203,13 @@ _quintet_fan_out_tmux() {
 }
 
 # Fan out a prompt to a set of providers in parallel. Echoes a results dir path.
-# Args: prompt provider-list-string
+# Providers are resolved by the caller (in its own shell, so errors exit nonzero);
+# provider-list-string is only scanned for embedded --flags.
+# Args: prompt provider-list-string provider...
 _quintet_fan_out() {
     local prompt="$1" provider_arg="$2"
+    shift 2
+    local -a providers=("$@")
     local use_tmux=true
 
     local no_mcp="${QUINTET_NO_MCP:-false}"
@@ -238,11 +253,10 @@ _quintet_fan_out() {
 
 ${prompt}"
     fi
-    local -a providers=()
-    mapfile -t providers < <(_quintet_resolve_providers "$provider_arg")
     [[ "${#providers[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
 
-    local rundir; rundir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-fleet.XXXXXX")"
+    local rundir; rundir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-fleet.XXXXXX")" \
+        || die "fleet: cannot create run dir"
     local p
     local ran_tmux=false
 
@@ -304,8 +318,8 @@ quintet_fleet_parallel() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
@@ -317,7 +331,12 @@ quintet_fleet_parallel() {
     done
     [[ -n "$providers" ]] || providers="all"
     [[ -n "$prompt" ]] || die "fleet: missing prompt"
-    local rundir; rundir="$(_quintet_fan_out "$prompt" "$providers")"
+    local -a plist=()
+    _quintet_resolve_providers plist "$providers"
+    [[ "${#plist[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
+    local rundir
+    rundir="$(_quintet_fan_out "$prompt" "$providers" "${plist[@]}")" || return 1
+    [[ -d "$rundir" ]] || return 1
     _quintet_render_dir "$rundir"
     rm -rf "$rundir" 2>/dev/null || true
 }
@@ -330,8 +349,8 @@ quintet_fleet_review() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
@@ -362,8 +381,8 @@ quintet_fleet_debate() {
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
             --safe)    export QUINTET_SAFE_MODE=true; shift ;;
-            --model)   export QUINTET_MODEL="$2"; shift 2 ;;
-            --effort)  export QUINTET_EFFORT="$2"; shift 2 ;;
+            --model)   need_arg "$1" $#; export QUINTET_MODEL="$2"; shift 2 ;;
+            --effort)  need_arg "$1" $#; export QUINTET_EFFORT="$2"; shift 2 ;;
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"
@@ -384,8 +403,14 @@ quintet_fleet_debate() {
     ensure_dir "$base"
     archive="$(mktemp -d "${base}/${ts}.XXXXXX")" || die "fleet debate: cannot create transcript dir under ${base}"
 
+    local -a plist=()
+    _quintet_resolve_providers plist "$providers"
+    [[ "${#plist[@]}" -ge 1 ]] || die "fleet debate: no ready providers (run: quintet doctor)"
+
     log INFO "── debate round 1: independent positions ──"
-    local r1; r1="$(_quintet_fan_out "$question" "$providers")"
+    local r1
+    r1="$(_quintet_fan_out "$question" "$providers" "${plist[@]}")" || return 1
+    [[ -d "$r1" ]] || return 1
     local round1_text; round1_text="$(_quintet_render_dir "$r1")"
     echo "$round1_text"
     printf '%s\n' "$round1_text" > "${archive}/round1.md"
@@ -414,7 +439,12 @@ ANSWERS:
 ${answers}
 
 Critique the other answers — name specifically where they are wrong or incomplete — then give your refined final position. Be concise and concrete. Do not restate the question."
-    local r2; r2="$(_quintet_fan_out "$critique_prompt" "$providers")"
+    # Re-resolve: round-1 failures may have opened a circuit breaker.
+    _quintet_resolve_providers plist "$providers"
+    [[ "${#plist[@]}" -ge 1 ]] || { rm -rf "$r1"; die "fleet debate: no ready providers for round 2"; }
+    local r2
+    r2="$(_quintet_fan_out "$critique_prompt" "$providers" "${plist[@]}")" || { rm -rf "$r1"; return 1; }
+    [[ -d "$r2" ]] || { rm -rf "$r1"; return 1; }
     local round2_text; round2_text="$(_quintet_render_dir "$r2")"
     echo "$round2_text"
     printf '%s\n' "$round2_text" > "${archive}/round2.md"
