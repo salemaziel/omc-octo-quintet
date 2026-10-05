@@ -40,6 +40,29 @@ quintet_session_exists() {
     qtmux has-session -t "=$(quintet_tmux_session "$1")" 2>/dev/null
 }
 
+# quintet_tmux_liveness <target> — alive | dead | gone | unknown for a tmux
+# target (=session or =session:=window). gone = tmux says the target, its
+# session or the server doesn't exist; any other tmux error is unknown, and
+# callers never treat unknown as dead (nothing is killed or marked crashed on it).
+quintet_tmux_liveness() {
+    local out rc
+    if [[ "$1" != *:* ]]; then
+        # A session: has-session matches "=name" exactly (list-panes -t would
+        # take it as a window target and can match another session).
+        out="$(qtmux has-session -t "$1" 2>&1)" && { echo alive; return 0; }
+        rc=1
+    else
+        out="$(qtmux list-panes -t "$1" -F '#{pane_dead}' 2>&1)"; rc=$?
+    fi
+    if (( rc == 0 )); then
+        case "${out%%$'\n'*}" in 0) echo alive ;; 1) echo dead ;; *) echo unknown ;; esac
+    elif grep -Eqi "can't find (session|window|pane)|no server running|error connecting to .*\((No such file or directory|Connection refused)\)" <<< "$out"; then
+        echo gone
+    else
+        echo unknown
+    fi
+}
+
 # Create the detached session for a team (idempotent). $2 = working dir.
 quintet_session_create() {
     local team="$1" cwd="${2:-$PWD}" sess cwd_esc; sess=$(quintet_tmux_session "$team")

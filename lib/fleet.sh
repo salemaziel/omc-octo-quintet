@@ -272,13 +272,14 @@ _quintet_fan_out_tmux() {
         (( 10#$t > max_t )) && max_t=$((10#$t))
     done
     local deadline=$(( $(now_epoch) + max_t + 30 ))
-    local all_done dead
+    # A tmux error (liveness unknown) keeps polling until the deadline.
+    local all_done lv
     while :; do
         all_done=true
         for p in "${providers[@]}"; do
             [[ -f "${rundir}/${p}.out.status" ]] && continue
-            dead="$(qtmux list-panes -t "=${sess}:=${p}" -F '#{pane_dead}' 2>/dev/null | head -1)"
-            if [[ "$dead" != "0" && ! -f "${rundir}/${p}.out.status" ]]; then
+            lv="$(quintet_tmux_liveness "=${sess}:=${p}")"
+            if [[ ( "$lv" == dead || "$lv" == gone ) && ! -f "${rundir}/${p}.out.status" ]]; then
                 {
                     echo "fleet worker exited without a result. Last pane output:"
                     qtmux capture-pane -p -t "=${sess}:=${p}" -S -20 2>/dev/null

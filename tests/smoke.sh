@@ -586,6 +586,19 @@ permanent|rate limit|HTTP 403 Forbidden
 TBL
 $cls_ok && ok "classifier anchors status codes, stderr first (1.4)" || bad "classifier anchors status codes, stderr first (1.4)"
 
+# 3.1: the tmux server going away ends the wait with the seat crashed; a tmux
+# error that isn't "gone" (here a fake protocol mismatch) is unknown: no crash.
+t0=$(date +%s)
+( sleep 3; ttmux kill-server ) &
+out=$(ff env QUINTET_TIMEOUT=30 QUINTET_CLAUDE_ONESHOT_CMD='sleep 31' "$BIN" fleet "hi" claude 2>&1)
+el=$(( $(date +%s) - t0 )); wait
+pkill -x -f 'sleep 31'
+[[ $el -lt 15 ]] && echo "$out" | grep -q "claude worker exited without a result" && ok "tmux server gone mid-fleet: seat crashed early (${el}s, 3.1)" || bad "tmux server gone mid-fleet: seat crashed early (${el}s, 3.1)"
+mkdir -p "$F/faketmux"
+printf '#!/bin/bash\ncase " $* " in *" list-panes "*) echo "protocol version mismatch (client 9, server 8)" >\&2; exit 1 ;; esac\nexec %q "$@"\n' "$(command -v tmux)" > "$F/faketmux/tmux"; chmod +x "$F/faketmux/tmux"
+out=$(ff env PATH="$F/faketmux:$F/bin:/usr/bin:/bin" QUINTET_CLAUDE_ONESHOT_CMD='sleep 2; echo unknown-ans-31' "$BIN" fleet "hi" claude 2>&1)
+echo "$out" | grep -q "unknown-ans-31" && ! echo "$out" | grep -q "worker-crashed\|exited without a result" && ok "tmux error (unknown liveness) doesn't mark the seat crashed (3.1)" || bad "tmux error (unknown liveness) doesn't mark the seat crashed (3.1)"
+
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
 echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
@@ -807,6 +820,10 @@ mkdir -p "$LK/locks/c.lock" "$LK/locks/c.lock.break"; echo "$ldead" > "$LK/locks
 lk_try c && [[ "$(cat "$LK/locks/c.lock/pid")" == "$$" ]] && ok "pid-less leftover .break does not block (S-L1)" || bad "pid-less leftover .break does not block (S-L1)"
 mkdir -p "$LK/locks/b.lock"
 lk_try b && [[ "$(cat "$LK/locks/b.lock/pid")" == "$$" ]] && ok "empty pid-less lock dir does not block (S-L1)" || bad "empty pid-less lock dir does not block (S-L1)"
+sleep 60 & lkreuse=$!
+mkdir -p "$LK/locks/e.lock"; echo "$lkreuse" > "$LK/locks/e.lock/pid"; echo "1 not-this-boot" > "$LK/locks/e.lock/owner"
+lk_try e && [[ "$(cat "$LK/locks/e.lock/pid")" == "$$" && -s "$LK/locks/e.lock/owner" ]] && ok "lock with a live but reused pid is broken; new lock records its owner (3.2)" || bad "lock with a live but reused pid is broken; new lock records its owner (3.2)"
+kill "$lkreuse" 2>/dev/null; wait "$lkreuse" 2>/dev/null
 [[ -z "$(find "$LK/locks" -name '*.tmp.*' 2>/dev/null)" ]] && ok "no lock temp dirs left behind (S-L1)" || bad "no lock temp dirs left behind (S-L1)"
 sleep 60 & lklive=$!
 mkdir -p "$LK/locks/d.lock" "$LK/teams/d"; echo "$lklive" > "$LK/locks/d.lock/pid"; echo '{}' > "$LK/teams/d/team.json"

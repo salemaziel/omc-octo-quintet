@@ -577,10 +577,10 @@ _quintet_manifest_workers() {
 quintet_team_status() {
     local name="${1:-}"; [[ -n "$name" ]] || die "team status: missing team name"
     quintet_validate_team_name "$name"
-    if ! quintet_session_exists "$name"; then
-        log WARN "team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"
-        return 1
-    fi
+    case "$(quintet_tmux_liveness "=$(quintet_tmux_session "$name")")" in
+        gone)    log WARN "team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"; return 1 ;;
+        unknown) echo "Team: $name   ⚠️  UNKNOWN: tmux didn't answer for session $(quintet_tmux_session "$name"); nothing assumed. Retry, or check: tmux ls"; return 1 ;;
+    esac
     local tdir; tdir="$(_quintet_team_dir "$name")"
     echo "Team: $name   session: $(quintet_tmux_session "$name")"
     [[ -f "${tdir}/team.json" ]] && have_jq && \
@@ -591,6 +591,11 @@ quintet_team_status() {
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
         windows+=( "$w" )
+        if [[ "$(quintet_tmux_liveness "=$(quintet_tmux_session "$name"):=$w")" == unknown ]]; then
+            printf '  • %-18s ⚠️  UNKNOWN: tmux error reading this window\n' "$w"
+            bad=1
+            continue
+        fi
         if dst="$(quintet_window_dead_status "$name" "$w")"; then
             printf '  • %-18s ❌ EXITED (status %s)\n' "$w" "$dst"
             bad=1
@@ -624,10 +629,10 @@ quintet_team_status() {
 quintet_team_doctor() {
     local name="${1:-}"; [[ -n "$name" ]] || die "team doctor: missing team name"
     quintet_validate_team_name "$name"
-    if ! quintet_session_exists "$name"; then
-        echo "❌ Team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"
-        return 1
-    fi
+    case "$(quintet_tmux_liveness "=$(quintet_tmux_session "$name")")" in
+        gone)    echo "❌ Team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"; return 1 ;;
+        unknown) echo "⚠️  Team '$name': UNKNOWN: tmux didn't answer for session $(quintet_tmux_session "$name"); nothing assumed. Retry, or check: tmux ls"; return 1 ;;
+    esac
 
     echo "==> Diagnosing team: $name (session: $(quintet_tmux_session "$name"))"
     local issues=0
@@ -636,6 +641,11 @@ quintet_team_doctor() {
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
         windows+=( "$w" )
+        if [[ "$(quintet_tmux_liveness "=$(quintet_tmux_session "$name"):=$w")" == unknown ]]; then
+            issues=$((issues + 1))
+            echo "  ⚠️  Worker '$w': UNKNOWN (tmux error reading this window)"
+            continue
+        fi
         if dst="$(quintet_window_dead_status "$name" "$w")"; then
             issues=$((issues + 1))
             echo "  ❌ Worker '$w' EXITED (status $dst); its CLI is no longer running"

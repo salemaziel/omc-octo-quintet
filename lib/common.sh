@@ -102,7 +102,9 @@ quintet_safe_rm_dir() {
 # The lock appears atomically with its pid: the pid is written into a temp dir
 # that is then renamed into place, so a pid-less lock is never created (rename
 # fails if a non-empty lock exists; an empty leftover dir is replaced).
-# A lock is stale only when its pid is dead (kill -0 fails); there is no age-based
+# A lock is stale only when its pid is dead (kill -0 fails) or, when the lock
+# records the owner's start time and boot id, the pid now belongs to another
+# process (reused, or from before a reboot); there is no age-based
 # breaking. Breaking takes a second lock (<team>.lock.break, made the same way,
 # with its own pid) so two breakers can't both win: move the stale lock aside, retry
 # once. A .break dir whose pid is dead is itself stale: a breaker claims it (mkdir
@@ -129,11 +131,37 @@ _quintet_rename() {
     fi
 }
 
-# _quintet_lock_take <lockdir> — create <lockdir> containing pid=$$, atomically.
+# _quintet_pid_identity <pid> — "<start time> <boot id>" for a live pid, so a
+# reused pid (or one from before a reboot) can be told apart. The command name
+# in /proc/<pid>/stat can hold spaces, so fields are counted after its ")".
+_quintet_pid_identity() {
+    local st boot
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    st="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+    st="${st##*) }"
+    # shellcheck disable=SC2086  # split the stat fields
+    set -- $st
+    boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || return 1
+    [[ -n "${20:-}" && -n "$boot" ]] && echo "${20} ${boot}"
+}
+
+# _quintet_lock_owner_alive <lockdir> <pid> — true if <pid> still owns <lockdir>:
+# alive, and when the lock records an owner identity, the same process. A lock
+# without one (written by an older quintet) keeps the pid-only rule.
+_quintet_lock_owner_alive() {
+    local want
+    kill -0 "$2" 2>/dev/null || return 1
+    want="$(cat "${1}/owner" 2>/dev/null)" || return 0
+    [[ -z "$want" || "$(_quintet_pid_identity "$2")" == "$want" ]]
+}
+
+# _quintet_lock_take <lockdir> — create <lockdir> containing pid=$$ and the
+# owner's identity (start time + boot id), atomically.
 _quintet_lock_take() {
     local tmp
     tmp="$(mktemp -d "${1}.tmp.XXXXXX" 2>/dev/null)" || return 1
-    if echo "$$" > "${tmp}/pid" && _quintet_rename "$tmp" "$1"; then return 0; fi
+    if echo "$$" > "${tmp}/pid" && { _quintet_pid_identity "$$" > "${tmp}/owner" || :; } \
+        && _quintet_rename "$tmp" "$1"; then return 0; fi
     rm -rf -- "$tmp"
     return 1
 }
@@ -157,11 +185,11 @@ quintet_lock() {
     _quintet_lock_take "$lk" && return 0
     pid="$(cat "${lk}/pid" 2>/dev/null)"
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-    kill -0 "$pid" 2>/dev/null && return 1
+    _quintet_lock_owner_alive "$lk" "$pid" && return 1
     if ! _quintet_lock_take "${lk}.break"; then
         bpid="$(cat "${lk}.break/pid" 2>/dev/null)"
         [[ "$bpid" =~ ^[0-9]+$ ]] || return 1
-        kill -0 "$bpid" 2>/dev/null && return 1
+        _quintet_lock_owner_alive "${lk}.break" "$bpid" && return 1
         # One breaker wins the claim. The pid re-check after it catches a claim
         # that landed in a live .break which replaced the stale one.
         mkdir -- "${lk}.break/claim" 2>/dev/null || return 1
@@ -173,7 +201,7 @@ quintet_lock() {
         _quintet_lock_take "${lk}.break" || return 1
     fi
     if [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$pid" ]]; then
-        log WARN "breaking stale lock for '$1' (pid $pid is gone)"
+        log WARN "breaking stale lock for '$1' (pid $pid is gone or reused)"
         _quintet_lock_discard "$lk"
     fi
     if _quintet_lock_take "$lk"; then
