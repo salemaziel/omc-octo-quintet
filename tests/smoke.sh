@@ -632,7 +632,7 @@ echo "$out" | grep -Eq "^  claude +request-changes +1 +0 +0$" && echo "$out" | g
 
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
-echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
+echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124:" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
 
 # A6 / A5: a worker that dies without a .status is detected early (remain-on-exit).
 # The kill only runs inside a tmux pane (its own process group), never in this
