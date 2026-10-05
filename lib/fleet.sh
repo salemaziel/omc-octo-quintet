@@ -136,13 +136,13 @@ _quintet_bind_bare_cli() {
 }
 
 # Run one provider one-shot with reliability bookkeeping; write answer to file.
-# Args: provider prompt out_file [no_mcp]
+# Args: provider prompt out_file [no_mcp] [tee_to]
 _quintet_fleet_one() {
     local provider="$1" prompt="$2" out="$3"
-    local no_mcp="${4:-${QUINTET_NO_MCP:-false}}"
+    local no_mcp="${4:-${QUINTET_NO_MCP:-false}}" tee_to="${5:-}"
     local resp code start end secs
     start=$(now_epoch)
-    resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp"); code=$?
+    resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp" "" "" "" "$tee_to"); code=$?
     end=$(now_epoch); secs=$(( end - start ))
     if [[ $code -ne 0 ]]; then
         local class; class=$(record_failure "$provider" "$code" "$resp")
@@ -158,14 +158,15 @@ _quintet_fleet_one() {
     fi
 }
 
-# Internal worker entry point invoked inside tmux windows
+# Internal worker entry point invoked inside tmux windows. The provider's stdout
+# is also streamed to the pane (stderr = the pane's tty) so attaching shows it (A5).
 quintet_fleet_worker() {
     local provider="$1" prompt_file="$2" out_file="$3"
     local no_mcp="${4:-${QUINTET_NO_MCP:-false}}"
     [[ -f "$prompt_file" ]] || die "fleet worker: missing prompt file '$prompt_file'"
     local prompt
     prompt="$(cat "$prompt_file")"
-    _quintet_fleet_one "$provider" "$prompt" "$out_file" "$no_mcp"
+    _quintet_fleet_one "$provider" "$prompt" "$out_file" "$no_mcp" /dev/stderr
 }
 
 _quintet_fan_out_tmux() {
@@ -176,60 +177,94 @@ _quintet_fan_out_tmux() {
     local prompt_file="${rundir}/prompt.txt"
     printf '%s' "$prompt" > "$prompt_file"
 
-    local sess="quintet-fleet-$(now_epoch)-$$-${RANDOM}"
+    local sess; sess="quintet-fleet-$(now_epoch)-$$-${RANDOM}"
     if ! qtmux new-session -d -s "$sess" -c "$PWD" -n "leader" 2>/dev/null; then
         return 1
     fi
-    # Per-worker env files live in the 0700 rundir; remove leftovers on abort (A4/A13).
-    # shellcheck disable=SC2064  # expand rundir now
-    trap "rm -f -- $(printf '%q' "$rundir")/*.env" EXIT
+    # This runs inside the caller's $(...), so the traps live in that subshell.
+    # On abort: kill the session (workers die with it) and remove the per-worker
+    # env files (A4/A13, M3). The previous traps are restored before returning.
+    local prev_traps; prev_traps="$(trap -p EXIT INT TERM)"
+    local cleanup
+    cleanup="qtmux kill-session -t $(printf '%q' "=$sess") 2>/dev/null; rm -f -- $(printf '%q' "$rundir")/*.env"
+    # shellcheck disable=SC2064  # expand sess/rundir now
+    trap "$cleanup" EXIT
     # shellcheck disable=SC2064
-    trap "rm -f -- $(printf '%q' "$rundir")/*.env; exit 130" INT TERM
+    trap "$cleanup; exit 130" INT TERM
 
     log INFO "Fleet session active. View live with: tmux attach -t $sess"
     printf "Tmux session: tmux attach -t %s\n" "$sess" >&2
     qtmux send-keys -t "=${sess}:=leader" "printf 'quintet fleet session %s\nProviders: %s\n' '$sess' '${providers[*]}'" Enter
 
+    # Each window starts on a placeholder so remain-on-exit (a window option) is
+    # set before the worker runs; respawn-pane -k then swaps in the worker. A
+    # worker that crashes at once keeps its pane (dead) for inspection (A5, A6).
     local p out envf
     for p in "${providers[@]}"; do
         log INFO "dispatching (tmux) → $(quintet_provider_emoji "$p") $p"
         out="${rundir}/${p}.out"
         envf="${rundir}/${p}.env"
         quintet_write_worker_env "$p" "$envf" || { log ERROR "fleet: cannot write env file for $p"; continue; }
+        qtmux new-window -d -t "=$sess" -n "$p" -c "$PWD" sleep 86400 \
+            && qtmux set-option -w -t "=${sess}:=${p}" remain-on-exit on >/dev/null \
+            || { log ERROR "fleet: cannot create tmux window for $p"; continue; }
         # shellcheck disable=SC2016  # $1/$@ expand in the worker's bash
-        qtmux new-window -t "=$sess" -n "$p" -c "$PWD" \
+        qtmux respawn-pane -k -t "=${sess}:=${p}" -c "$PWD" \
             bash -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
-            quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp"
+            quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp" \
+            || { log ERROR "fleet: cannot start worker for $p"; qtmux kill-window -t "=${sess}:=${p}" 2>/dev/null; }
     done
 
-    # Poll status files for completion
-    local timeout="${QUINTET_TIMEOUT:-300}"
-    local max_iters=$((timeout * 2))
-    local elapsed=0 all_done
-    while [[ $elapsed -lt $max_iters ]]; do
+    # Poll for .status files. Deadline = slowest provider's own timeout + 30s
+    # grace, so a QUINTET_<P>_TIMEOUT above QUINTET_TIMEOUT isn't cut short (A6).
+    # A window whose pane is dead (or gone) without a .status is finished early.
+    local max_t=0 t
+    for p in "${providers[@]}"; do
+        t="$(quintet_provider_timeout "$p")"
+        [[ "$t" =~ ^[0-9]+$ ]] || t=240
+        (( 10#$t > max_t )) && max_t=$((10#$t))
+    done
+    local deadline=$(( $(now_epoch) + max_t + 30 ))
+    local all_done dead
+    while :; do
         all_done=true
         for p in "${providers[@]}"; do
-            if [[ ! -f "${rundir}/${p}.out.status" ]]; then
-                all_done=false
-                break
+            [[ -f "${rundir}/${p}.out.status" ]] && continue
+            dead="$(qtmux list-panes -t "=${sess}:=${p}" -F '#{pane_dead}' 2>/dev/null | head -1)"
+            if [[ "$dead" != "0" && ! -f "${rundir}/${p}.out.status" ]]; then
+                {
+                    echo "fleet worker exited without a result. Last pane output:"
+                    qtmux capture-pane -p -t "=${sess}:=${p}" -S -20 2>/dev/null
+                } >> "${rundir}/${p}.out"
+                echo "1:worker-crashed" > "${rundir}/${p}.out.status"
+                log WARN "✗ $(quintet_provider_emoji "$p") $p worker exited without a result"
+                continue
             fi
+            all_done=false
         done
         [[ "$all_done" == "true" ]] && break
+        (( $(now_epoch) >= deadline )) && break
         sleep 0.5
-        elapsed=$((elapsed + 1))
     done
 
+    local class
     for p in "${providers[@]}"; do
         if [[ ! -f "${rundir}/${p}.out.status" ]]; then
-            echo "124:timeout" > "${rundir}/${p}.out.status"
             echo "Execution timed out in tmux window" >> "${rundir}/${p}.out"
+            class="$(record_failure "$p" 124 "fleet tmux poll timeout")"
+            echo "124:${class}" > "${rundir}/${p}.out.status"
             log WARN "✗ $(quintet_provider_emoji "$p") $p timed out in tmux"
         fi
     done
 
-    qtmux kill-session -t "=$sess" 2>/dev/null || true
     rm -f -- "$rundir"/*.env
     trap - EXIT INT TERM
+    eval "$prev_traps"
+    if [[ "${QUINTET_FLEET_KEEP_SESSION:-false}" == "true" ]]; then
+        log INFO "fleet session kept: tmux attach -t $sess   (remove: tmux kill-session -t '=$sess')"
+    else
+        qtmux kill-session -t "=$sess" 2>/dev/null || true
+    fi
     return 0
 }
 
@@ -328,7 +363,7 @@ _quintet_render_dir() {
         provider="$(basename "$f" .out)"
         st=$(cat "${f}.status" 2>/dev/null || echo "?")
         echo "════════════════════════════════════════════════════════════"
-        echo "$(quintet_provider_emoji "${provider%%__*}") ${provider}   [${st}]"
+        echo "$(quintet_provider_emoji "${provider##*__fallback_}") $(_quintet_answer_label "$provider")   [${st}]"
         echo "════════════════════════════════════════════════════════════"
         if [[ "$st" == 0:* ]]; then
             cat "$f"

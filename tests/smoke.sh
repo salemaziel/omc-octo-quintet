@@ -488,6 +488,71 @@ ttmux kill-session -t "=$fnew" 2>/dev/null
 [[ -z "$(find "$P/state/locks" -mindepth 1 2>/dev/null)" ]] && ok "no locks left behind" || bad "no locks left behind"
 chmod -R u+rwx "$P" 2>/dev/null; rm -rf "$P"
 
+echo "── 9. fleet runtime: cleanup, deadlines, visibility ──"
+# Sandbox: fake HOME/QUINTET_HOME/TMPDIR, stub claude+codex, and a PATH with no
+# real provider CLIs (they live outside /usr/bin:/bin), so a fallback can't reach one.
+F="$(mktemp -d)"; mkdir -p "$F/bin" "$F/home/.codex" "$F/tmp" "$F/state"; touch "$F/home/.codex/auth.json"
+printf '#!/bin/bash\n[ -n "$QUINTET_TEST_STUB_FAIL" ] && exit 1\n[ -n "$QUINTET_TEST_SLEEP" ] && sleep "$QUINTET_TEST_SLEEP"\necho "stub codex answer"\n' > "$F/bin/codex"
+printf '#!/bin/bash\necho "stub claude answer"\n' > "$F/bin/claude"; chmod +x "$F/bin/"*
+ff() { ( export PATH="$F/bin:/usr/bin:/bin" HOME="$F/home" QUINTET_HOME="$F/home/.quintet" TMPDIR="$F/tmp"
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_TIMEOUT QUINTET_CLAUDE_TIMEOUT QUINTET_CODEX_TIMEOUT
+    "$@" ); }
+fleet_sessions() { ttmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^quintet-fleet-'; }
+
+# M3: SIGINT mid-poll kills the fleet session and removes env files.
+( set -m
+  ff env QUINTET_CLAUDE_ONESHOT_CMD='sleep 30' "$BIN" fleet "hi" claude >/dev/null 2>&1 &
+  bg=$!
+  for _ in $(seq 1 40); do fleet_sessions >/dev/null && break; sleep 0.25; done
+  sleep 1
+  kill -INT -- -"$bg" 2>/dev/null
+  wait "$bg" ) 2>/dev/null
+for _ in $(seq 1 20); do fleet_sessions >/dev/null || break; sleep 0.25; done
+[[ -z "$(fleet_sessions)" ]] && ok "SIGINT mid-poll leaves no quintet-fleet-* session (M3)" || bad "SIGINT mid-poll leaves no quintet-fleet-* session (M3)"
+[[ -z "$(find "$F/tmp" -name '*.env' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no env file" || bad "SIGINT mid-poll leaves no env file"
+
+# A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
+out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
+echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
+
+# A6 / A5: a worker that dies without a .status is detected early (remain-on-exit).
+# The kill only runs inside a tmux pane (its own process group), never in this shell.
+t0=$(date +%s)
+out=$(ff env QUINTET_TIMEOUT=20 QUINTET_CLAUDE_ONESHOT_CMD='[ -n "$TMUX_PANE" ] && kill -KILL 0; exit 1' "$BIN" fleet "hi" claude 2>&1)
+el=$(( $(date +%s) - t0 ))
+[[ $el -lt 12 ]] && echo "$out" | grep -q "worker-crashed" && ok "crashed fleet worker detected early (${el}s, A6)" || bad "crashed fleet worker detected early (${el}s, A6)"
+echo "$out" | grep -qF "$(quintet_provider_emoji codex) codex (fallback for claude)" && ok "fallback runs after a crashed worker" || bad "fallback runs after a crashed worker"
+
+# A6: a poller timeout feeds the circuit breaker.
+rm -rf "$F/home/.quintet/provider-state"
+out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CLAUDE_TIMEOUT=1 QUINTET_CLAUDE_ONESHOT_CMD='sleep 60' "$BIN" fleet "hi" claude 2>&1)
+echo "$out" | grep -q "claude   \[124:" && grep -q ":124$" "$F/home/.quintet/provider-state/claude.failures" 2>/dev/null && ok "poller timeout -> record_failure (A6)" || bad "poller timeout -> record_failure (A6)"
+[[ -z "$(fleet_sessions)" ]] && ok "fleet session killed after polling" || bad "fleet session killed after polling"
+
+# M4: fallback render uses the real provider's label and emoji.
+out=$(ff env QUINTET_TEST_STUB_FAIL=1 "$BIN" fleet --no-tmux "hi" codex 2>&1)
+echo "$out" | grep -qF "$(quintet_provider_emoji claude) claude (fallback for codex)   [0:ok]" && ok "fallback render shows 'claude (fallback for codex)' (M4)" || bad "fallback render shows 'claude (fallback for codex)' (M4)"
+! echo "$out" | grep -q "codex__fallback_claude" && ok "no raw codex__fallback_claude label (M4)" || bad "no raw codex__fallback_claude label (M4)"
+
+# A5: provider stdout is visible in the pane; QUINTET_FLEET_KEEP_SESSION keeps it.
+ferr=$(ff env QUINTET_FLEET_KEEP_SESSION=true QUINTET_CLAUDE_ONESHOT_CMD='echo pane-marker-ok' "$BIN" fleet "hi" claude 2>&1 >"$F/fout.txt")
+ksess=$(echo "$ferr" | sed -n 's/^Tmux session: tmux attach -t //p' | head -1)
+ttmux capture-pane -p -S - -t "=${ksess}:=claude" 2>/dev/null | grep -q "pane-marker-ok" && ok "pane contains the provider's stdout (A5)" || bad "pane contains the provider's stdout (A5)"
+[[ "$(ttmux list-panes -t "=${ksess}:=claude" -F '#{pane_dead}' 2>/dev/null)" == 1 ]] && ok "finished fleet window kept (remain-on-exit, A5)" || bad "finished fleet window kept (remain-on-exit, A5)"
+grep -q "pane-marker-ok" "$F/fout.txt" && ok "answer still written to .out and rendered" || bad "answer still written to .out and rendered"
+echo "$ferr" | grep -q "fleet session kept: tmux attach -t $ksess.*kill-session" && ok "KEEP_SESSION prints attach + kill commands" || bad "KEEP_SESSION prints attach + kill commands"
+[[ -n "$ksess" ]] && ttmux kill-session -t "=$ksess" 2>/dev/null
+
+# Plan 5.3 applied to team windows: a CLI that exits at once keeps its pane.
+( export PATH="$F/bin:/usr/bin:/bin" HOME="$F/home" QUINTET_HOME="$F/home/.quintet" QUINTET_STATE_DIR="$F/state" TMPDIR="$F/tmp"
+  export QUINTET_CLAUDE_LAUNCH='echo fast-exit-marker; exit 3' QUINTET_CLAUDE_WARMUP=0
+  "$BIN" team 1:claude "t" --name "fastx-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 )
+[[ "$(ttmux list-panes -t "=quintet-fastx-$$:=w1-claude" -F '#{pane_dead}' 2>/dev/null)" == 1 ]] \
+    && ttmux capture-pane -p -S - -t "=quintet-fastx-$$:=w1-claude" 2>/dev/null | grep -q fast-exit-marker \
+    && ok "fast-exiting team worker keeps its pane and output" || bad "fast-exiting team worker keeps its pane and output"
+QUINTET_STATE_DIR="$F/state" "$BIN" team shutdown "fastx-$$" --force >/dev/null 2>&1
+rm -rf "$F"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

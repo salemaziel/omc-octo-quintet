@@ -268,15 +268,36 @@ quintet_resolve_effort() {
     printf '%s' "$v"
 }
 
-# quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode]
+# quintet_provider_timeout <provider> — one-shot timeout in seconds.
+# Generous defaults: a cold-started headless CLI doing real reasoning routinely
+# needs >120s. The earlier 90–120s ceilings were the main source of exit-124
+# timeouts (compounded by agentic file-exploration, now suppressed by the
+# advisory preamble in fleet.sh). Override per provider via QUINTET_<P>_TIMEOUT.
+quintet_provider_timeout() {
+    local t_default="${QUINTET_TIMEOUT:-240}"
+    case "$1" in
+        claude)      echo "${QUINTET_CLAUDE_TIMEOUT:-$t_default}" ;;
+        codex)       echo "${QUINTET_CODEX_TIMEOUT:-$t_default}" ;;
+        agy|gemini)  echo "${QUINTET_AGY_TIMEOUT:-${QUINTET_GEMINI_TIMEOUT:-$t_default}}" ;;
+        copilot)     echo "${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
+        qwen)        echo "${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
+        opencode)    echo "${QUINTET_OPENCODE_TIMEOUT:-$t_default}" ;;
+        *)           echo "$t_default" ;;
+    esac
+}
+
+# quintet_provider_oneshot <provider> <prompt> [no_mcp] [model] [effort] [safe_mode] [tee_to]
 # Runs the CLI headless, prints the response to stdout, returns the CLI exit code.
 # Honors a per-provider timeout (seconds) via QUINTET_<PROVIDER>_TIMEOUT.
+# tee_to (optional): also stream the provider's stdout to this file as it
+# arrives (the fleet tmux worker passes /dev/stderr so it shows in the pane).
 quintet_provider_oneshot() {
     local provider="$1" prompt="$2"
     local no_mcp="${3:-${QUINTET_NO_MCP:-false}}"
     local model="${4:-}"
     local effort="${5:-}"
     local safe_mode="${6:-${QUINTET_SAFE_MODE:-false}}"
+    local tee_to="${7:-}"
     [[ "$no_mcp" == "--no-mcp" ]] && no_mcp=true
     [[ "$safe_mode" == "--safe" ]] && safe_mode=true
 
@@ -287,21 +308,7 @@ quintet_provider_oneshot() {
     [[ -n "$effort" ]] || effort="$(quintet_resolve_effort "$provider" "${QUINTET_EFFORT_MAP:-}" "${QUINTET_EFFORT_CLI:-}")" || return 2
     _quintet_caps_warn "$provider" "$no_mcp" "$effort"
 
-    # Generous defaults: a cold-started headless CLI doing real reasoning routinely
-    # needs >120s. The earlier 90–120s ceilings were the main source of exit-124
-    # timeouts (compounded by agentic file-exploration, now suppressed by the
-    # advisory preamble in fleet.sh). Override per provider via QUINTET_<P>_TIMEOUT.
-    local t_default="${QUINTET_TIMEOUT:-240}"
-    local timeout_secs
-    case "$provider" in
-        claude)      timeout_secs="${QUINTET_CLAUDE_TIMEOUT:-$t_default}" ;;
-        codex)       timeout_secs="${QUINTET_CODEX_TIMEOUT:-$t_default}" ;;
-        agy|gemini)  timeout_secs="${QUINTET_AGY_TIMEOUT:-${QUINTET_GEMINI_TIMEOUT:-$t_default}}" ;;
-        copilot)     timeout_secs="${QUINTET_COPILOT_TIMEOUT:-$t_default}" ;;
-        qwen)        timeout_secs="${QUINTET_QWEN_TIMEOUT:-$t_default}" ;;
-        opencode)    timeout_secs="${QUINTET_OPENCODE_TIMEOUT:-$t_default}" ;;
-        *)           timeout_secs="$t_default" ;;
-    esac
+    local timeout_secs; timeout_secs="$(quintet_provider_timeout "$provider")"
 
     # Build the command (and any env prefix) per provider into an array.
     local -a cmd=()
@@ -361,7 +368,11 @@ quintet_provider_oneshot() {
     # fold stderr in so the reliability layer can classify the error.
     local errfile out code
     errfile="$(mktemp "${TMPDIR:-/tmp}/quintet-err.XXXXXX")"
-    out="$("${cmd[@]}" 2>"$errfile")"; code=$?
+    if [[ -n "$tee_to" ]]; then
+        out="$("${cmd[@]}" 2>"$errfile" | tee -a -- "$tee_to"; exit "${PIPESTATUS[0]}")"; code=$?
+    else
+        out="$("${cmd[@]}" 2>"$errfile")"; code=$?
+    fi
     if [[ $code -ne 0 ]]; then
         printf '%s\n%s' "$out" "$(cat "$errfile")"
     else
