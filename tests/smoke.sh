@@ -74,10 +74,10 @@ QUINTET_NO_MCP=true
 unset QUINTET_NO_MCP
 
 echo "── 2f. model & reasoning effort resolution ──"
-[[ "$(quintet_provider_launch_cmd "codex" false "o3-mini" "high")" == *"codex --yolo --model o3-mini -c model_reasoning_effort=high"* ]] && ok "codex launch with model & effort" || bad "codex launch with model & effort"
-[[ "$(quintet_provider_launch_cmd "agy" false "gemini-2.5-pro" "high")" == *"agy --dangerously-skip-permissions --model gemini-2.5-pro --effort high"* ]] && ok "agy launch with model & effort" || bad "agy launch with model & effort"
+[[ "$(quintet_provider_launch_cmd "codex" false "gpt-6.1-sol" "high")" == *"codex --yolo --model gpt-6.1-sol -c model_reasoning_effort=high"* ]] && ok "codex launch with model & effort" || bad "codex launch with model & effort"
+[[ "$(quintet_provider_launch_cmd "agy" false "gemini-3.1-pro-high" "high")" == *"agy --dangerously-skip-permissions --model gemini-3.1-pro-high --effort high"* ]] && ok "agy launch with model & effort" || bad "agy launch with model & effort"
 [[ "$(quintet_provider_launch_cmd "claude" false "sonnet" "medium")" == *"claude --permission-mode bypassPermissions --model sonnet --effort medium"* ]] && ok "claude launch with model & effort" || bad "claude launch with model & effort"
-[[ "$(_quintet_parse_spec "1:codex:implementer:o3-mini")" == "codex:implementer:o3-mini" ]] && ok "spec parses 1:codex:implementer:o3-mini" || bad "spec parses 1:codex:implementer:o3-mini"
+[[ "$(_quintet_parse_spec "1:codex:implementer:gpt-6.1-sol")" == "codex:implementer:gpt-6.1-sol" ]] && ok "spec parses 1:codex:implementer:gpt-6.1-sol" || bad "spec parses 1:codex:implementer:gpt-6.1-sol"
 [[ "$(_quintet_parse_spec "1:claude::haiku")" == "claude:stock:haiku" ]] && ok "spec parses 1:claude::haiku with stock default" || bad "spec parses 1:claude::haiku with stock default"
 
 echo "── 2g. tiered permissions & safety mode (--safe) ──"
@@ -241,7 +241,7 @@ out=$(HOME="$fh" QUINTET_HOME="$fh/.quintet" "$BIN" debate --no-tmux "hi" 1:bogu
 [[ $rc -eq 1 ]] && ok "debate with unsupported provider exits 1" || bad "debate with unsupported provider exits 1"
 touch "$fh/.codex/auth.json"
 resolved=$(export PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet"; source "$ROOT/lib/reliability.sh"
-    declare -a rp=(); _quintet_resolve_providers rp "1:codex:implementer,codex:reviewer:o3"; echo "${rp[*]}")
+    declare -a rp=(); _quintet_resolve_providers rp "1:codex:implementer,codex:reviewer:gpt-6.1-sol"; echo "${rp[*]}")
 [[ "$resolved" == "codex" ]] && ok "fleet 1:codex:implementer,codex:reviewer resolves to one codex (C-M2)" || bad "fleet 1:codex:implementer,codex:reviewer resolves to one codex (C-M2) (got '$resolved')"
 out=$(PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet" QUINTET_CODEX_ONESHOT_CMD='echo "mock codex answer"' \
     "$BIN" fleet --no-tmux "hi" 1:codex:implementer 2>&1); rc=$?
@@ -758,12 +758,12 @@ out=$(sx env QUINTET_STATE_DIR="$S/l4state" QUINTET_CODEX_LAUNCH='bash --norc' "
 ttmux kill-session -t "=quintet-l4-$$" 2>/dev/null
 ( _quintet_parse_spec "1:codex:stock:-x" ) >/dev/null 2>&1 && bad "spec model '-x' rejected (S-L4)" || ok "spec model '-x' rejected (S-L4)"
 l4ok=true
-for mv in ollama:qwen3 gpt-5.1-codex claude-opus-4@20250101 openrouter/qwen/qwen3-coder o3-mini 'opus[1m]' 'claude-sonnet-4-5[1m]'; do
+for mv in ollama:qwen3 gpt-6.1-sol local-model@v2 openrouter/qwen/qwen3-coder gemini-3.8-flash-high 'opus[1m]' 'claude-sonnet-5-5[1m]'; do
     ( m=""; b=""; quintet_parse_cli_value --model "$mv" m b; [[ "$b" == "$mv" ]] ) >/dev/null 2>&1 || l4ok=false
 done
-( m=""; b=""; quintet_parse_cli_value --model "codex=gpt-5.1-codex,claude=sonnet" m b; [[ "$m" == "codex=gpt-5.1-codex,claude=sonnet" ]] ) >/dev/null 2>&1 || l4ok=false
-[[ "$(_quintet_parse_spec "1:codex:stock:gpt-5.1-codex" 2>/dev/null)" == "codex:stock:gpt-5.1-codex" ]] || l4ok=false
-$l4ok && ok "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)" || bad "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)"
+( m=""; b=""; quintet_parse_cli_value --model "codex=gpt-6.1-sol,claude=sonnet" m b; [[ "$m" == "codex=gpt-6.1-sol,claude=sonnet" ]] ) >/dev/null 2>&1 || l4ok=false
+[[ "$(_quintet_parse_spec "1:codex:stock:gpt-6.1-sol" 2>/dev/null)" == "codex:stock:gpt-6.1-sol" ]] || l4ok=false
+$l4ok && ok "legitimate model names (ollama:qwen3, gpt-6.1-sol, …) still accepted (S-L4)" || bad "legitimate model names (ollama:qwen3, gpt-6.1-sol, …) still accepted (S-L4)"
 rm -rf "$S"
 
 echo "── 12. worker exit, duplicate providers, empty team, traps, auth heuristics ──"

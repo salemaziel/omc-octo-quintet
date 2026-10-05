@@ -60,9 +60,9 @@ This passes `--strict-mcp-config` to Claude, `-c mcp_servers={}` to Codex, `--di
 ### Model Selection & Reasoning Effort (`--model`, `--effort`)
 
 Override default provider models or reasoning effort in any fleet dispatch:
-- Pass `--model <model>`: `$BIN consult "architecture trade-offs" claude,codex --model o3-mini`
+- Pass `--model <model>`: `$BIN consult "architecture trade-offs" claude,codex --model gpt-6.1-sol`
 - Pass `--effort <low|medium|high|xhigh|max>`: `$BIN debate "complex proof" codex,agy --effort high`
-- Or configure per-provider environment variables: `QUINTET_CODEX_MODEL=o3-mini`, `QUINTET_AGY_MODEL=gemini-2.5-pro`, `QUINTET_EFFORT=high`.
+- Or configure per-provider environment variables: `QUINTET_CODEX_MODEL=gpt-6.1-sol`, `QUINTET_AGY_MODEL=gemini-3.1-pro-high`, `QUINTET_EFFORT=high`.
 
 ### Tiered Safety Mode (`--safe`)
 

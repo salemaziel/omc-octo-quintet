@@ -60,7 +60,7 @@ Quintet supports assigning specialized subagent roles and target models using th
 
 ```bash
 # Explicit role & model assignment
-$BIN team 1:codex:implementer:o3-mini,1:agy:code-reviewer:gemini-2.5-pro,1:claude:security-auditor:sonnet "build auth feature"
+$BIN team 1:codex:implementer:gpt-6.1-sol,1:agy:code-reviewer:gemini-3.1-pro-high,1:claude:security-auditor:sonnet "build auth feature"
 
 # Mix of specialized roles, stock defaults, and custom models
 $BIN team 1:codex:implementer,1:claude::haiku "build and verify" --effort high
@@ -143,9 +143,9 @@ $BIN prune [--days N] [--dry-run]
   "started": "2026-05-25T04:30:00Z",
   "goal": "build the export feature",
   "workers": [
-    { "name": "w1-codex-implementer",  "provider": "codex", "role": "implementer",   "model": "o3-mini" },
+    { "name": "w1-codex-implementer",  "provider": "codex", "role": "implementer",   "model": "gpt-6.1-sol" },
     { "name": "w2-codex-test-engineer", "provider": "codex", "role": "test-engineer", "model": "default" },
-    { "name": "w3-agy-code-reviewer",  "provider": "agy",   "role": "code-reviewer", "model": "gemini-2.5-pro" },
+    { "name": "w3-agy-code-reviewer",  "provider": "agy",   "role": "code-reviewer", "model": "gemini-3.1-pro-high" },
     { "name": "w4-qwen",               "provider": "qwen",  "role": "stock",         "model": "default" }
   ]
 }

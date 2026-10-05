@@ -47,7 +47,7 @@ TEAM MODE (persistent tmux worker teams):
   --safe       drop the autonomy flags; workers then block on approval prompts,
                answer them with: quintet team send <name> <worker> "y"
   --model/--effort  a bare value (applies to every worker) or provider=value[,provider=value]
-               e.g.  --model codex=gpt-5,claude=opus
+               e.g.  --model codex=gpt-6.1-sol,claude=opus
   --no-mcp     disable MCP where the provider supports it (WARN when only partial)
   --tasks      one pre-split subtask per worker, separated by ||
   --skip-auth-check  skip the (heuristic) provider auth pre-flight
@@ -60,7 +60,7 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
 
   [providers] = "all" (default) | comma list, e.g.  claude,codex,agy,opencode
   --model/--effort take a bare value only with a single provider; otherwise use
-  provider=value[,provider=value] (e.g. --model codex=gpt-5).
+  provider=value[,provider=value] (e.g. --model codex=gpt-6.1-sol).
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq

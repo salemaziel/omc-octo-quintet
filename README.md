@@ -69,7 +69,7 @@ npm install -g @opencode/cli               # opencode  (or: curl -fsSL https://o
 
 ```bash
 # Team mode — persistent tmux workers with optional subagent roles, models, and safe mode
-quintet team 1:codex:implementer:o3-mini,1:agy:code-reviewer,1:claude:security-auditor "build auth feature" \
+quintet team 1:codex:implementer:gpt-6.1-sol,1:agy:code-reviewer,1:claude:security-auditor "build auth feature" \
     --name auth-feat --cwd ./repo --safe \
     --tasks "implement JWT auth endpoints||review logic and boundary safety||audit authz and injection vectors"
 quintet team status auth-feat
@@ -79,7 +79,7 @@ quintet team send auth-feat w2-agy-code-reviewer "focus on session expiration"
 quintet team shutdown auth-feat --force
 
 # Fleet mode — one-shot across many models (tmux session with live capture by default)
-quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy --model o3-mini --effort high
+quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy --model gpt-6.1-sol --effort high
 quintet debate  "gRPC or REST for this internal service?"
 quintet review  "$(git diff HEAD~1)" claude,agy,copilot --safe
 
