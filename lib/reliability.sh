@@ -12,24 +12,37 @@ QUINTET_CB_FAILURE_THRESHOLD="${QUINTET_CB_FAILURE_THRESHOLD:-3}"  # transient f
 QUINTET_CB_COOLDOWN_SECS="${QUINTET_CB_COOLDOWN_SECS:-300}"        # 5 min cooldown
 QUINTET_CB_FAILURE_WINDOW_SECS="${QUINTET_CB_FAILURE_WINDOW_SECS:-900}"  # only count fails this recent (15 min)
 
-# classify_error <exit_code> <error_text> -> "transient" | "permanent"
-classify_error() {
-    local code="${1:-1}" text; text=$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')
-    [[ "$code" == "124" ]] && { echo "transient"; return 0; }   # timeout(1) kill
-    if printf '%s' "$text" | grep -qE '429|rate.?limit|too many requests|overloaded|capacity|temporarily|5[0-9]{2}|bad gateway|service unavailable|gateway timeout|timed out|timeout|connection refused|econnreset|econnrefused|etimedout|network'; then
+# _quintet_classify_text <lowercased text> -> "transient" | "permanent" | "" (no match).
+# Status codes count only next to http/status/error/code or their reason phrase,
+# so an answer that says "fixed 404 pages" isn't read as a permanent failure.
+_quintet_classify_text() {
+    local text="$1"
+    if printf '%s' "$text" | grep -qE '(http|status|error|code)[^a-z0-9]{0,3}(429|5[0-9]{2})([^0-9]|$)|(429|5[0-9]{2}) (too many requests|internal server error|bad gateway|service unavailable|gateway time)|rate.?limit|too many requests|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|at capacity|connection (refused|reset)|econnreset|econnrefused|etimedout|socket hang up|network error|timed out'; then
         echo "transient"; return 0
     fi
-    if printf '%s' "$text" | grep -qE '401|403|unauthorized|forbidden|invalid.?api.?key|authentication|billing|payment|quota exceeded|insufficient|404|not found|invalid model|400|bad request'; then
+    if printf '%s' "$text" | grep -qE '(http|status|error|code)[^a-z0-9]{0,3}(400|401|403|404)([^0-9]|$)|(400|401|403|404) (bad request|unauthorized|forbidden|not found)|unauthorized|forbidden|invalid.?api.?key|authentication (failed|required|error)|billing|payment required|quota exceeded|insufficient.?(quota|credits|funds)|invalid model|model not found|unknown model|quintet: prompt too large'; then
         echo "permanent"; return 0
     fi
-    echo "transient"   # unknown -> safe to retry
+    return 0
 }
 
-# record_failure <provider> <exit_code> <error_text> -> echoes the error class.
+# classify_error <exit_code> <output_text> [stderr_text] -> "transient" | "permanent"
+# stderr is checked first; the output text only when stderr says nothing.
+classify_error() {
+    local code="${1:-1}" out err class
+    [[ "$code" == "124" ]] && { echo "transient"; return 0; }   # supervisor timeout
+    out=$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')
+    err=$(printf '%s' "${3:-}" | tr '[:upper:]' '[:lower:]')
+    class="$(_quintet_classify_text "$err")"
+    [[ -n "$class" ]] || class="$(_quintet_classify_text "$out")"
+    echo "${class:-transient}"   # unknown -> safe to retry
+}
+
+# record_failure <provider> <exit_code> <output_text> [stderr_text] -> echoes the error class.
 record_failure() {
-    local provider="$1" code="${2:-1}" text="${3:-}"
+    local provider="$1" code="${2:-1}" text="${3:-}" errtext="${4:-}"
     ensure_dir "$_Q_PSTATE"
-    local class; class=$(classify_error "$code" "$text")
+    local class; class=$(classify_error "$code" "$text" "$errtext")
     local ts; ts=$(now_epoch)
     local f="${_Q_PSTATE}/${provider}.failures"
     echo "${ts}:${class}:${code}" >> "$f"

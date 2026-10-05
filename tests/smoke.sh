@@ -569,6 +569,20 @@ out=$(ff env QUINTET_CLAUDE_ONESHOT_CMD='echo warn-noise >&2; echo quick-ans-13;
 el=$(( $(date +%s) - t0 ))
 [[ $el -lt 10 ]] && echo "$out" | grep -q "quick-ans-13" && ! echo "$out" | grep -q "warn-noise" && ! pgrep -x -f "sleep 4182" >/dev/null && ok "leftover child doesn't hold the fleet; stderr not in answer (${el}s, 1.3)" || { pkill -x -f "sleep 4182"; bad "leftover child doesn't hold the fleet; stderr not in answer (${el}s, 1.3)"; }
 
+# 1.4: status codes count only in context; stderr wins over the answer text.
+cls_ok=true
+while IFS='|' read -r want out err; do
+    got="$(bash -c 'source "$1/lib/common.sh"; source "$1/lib/reliability.sh"; classify_error 1 "$2" "$3"' _ "$ROOT" "$out" "$err")"
+    [[ "$got" == "$want" ]] || { cls_ok=false; echo "    classify '$out' / '$err': got $got, want $want"; }
+done <<'TBL'
+transient|Fixed 404 pages and the 500 handler|
+transient|We support 401k plans|
+transient||HTTP 503 Service Unavailable
+transient||Error: 429 Too Many Requests
+permanent||error 401: invalid api key
+permanent|rate limit|HTTP 403 Forbidden
+TBL
+$cls_ok && ok "classifier anchors status codes, stderr first (1.4)" || bad "classifier anchors status codes, stderr first (1.4)"
 
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
