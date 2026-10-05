@@ -108,8 +108,13 @@ For sensitive repositories, production checkouts, or when confirmation dialogs a
 In safe mode, workers **block on approval prompts** (tool approval, trust-folder). Run `quintet team doctor <name>` to find stalled workers, then answer with `team send`:
 ```bash
 $BIN team doctor export-feat
-$BIN team send export-feat w1-codex "y"
+$BIN team send export-feat w1-codex "y" --force
 ```
+(`team send` refuses while a recognized dialog is showing, since its Enter answers it; `--force` is how you answer on purpose.)
+
+### First run in a new folder (trust dialog)
+
+Claude asks "Is this a project you created or one you trust?" the first time it opens a folder, and Enter there selects "No, exit". The kickoff therefore checks each pane before typing: with any recognized dialog up, the task is **held** (`teams/<name>/held/<worker>.txt`, a `[quintet] <worker> HELD: <modal>` taskboard line, and a WARN). Answer it in `tmux attach -t quintet-<name>`, then `$BIN team resume <name> [worker]` (no worker = all held). For a folder you trust, `--trust-cwd` (or `QUINTET_TRUST_CWD=true`) lets quintet choose "Yes, I trust this folder" for claude workers; it checks the cursor landed on Yes before pressing Enter, and holds on anything else.
 There is no escalation path yet: nothing pauses a worker and asks the orchestrator, so someone has to poll `doctor`. Doctor exits nonzero when a pane can't be captured (inspection error) or when `team.json` and the live windows disagree (missing or extra worker). "No recognized modal" means only that none of the known prompt patterns matched.
 
 Team windows stay open as dead panes after a worker's CLI exits (`remain-on-exit`), so output can be read with `team capture`; `team shutdown` removes them.

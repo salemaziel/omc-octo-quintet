@@ -901,6 +901,90 @@ nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINT
 ttmux kill-session -t "=quintet-kept-$$" 2>/dev/null
 rm -rf "$N"
 
+echo "── 14. kickoff holds on trust dialogs, --trust-cwd, resume, send refusal ──"
+# A stub CLI draws Claude's first-run trust dialog (text as captured from a real
+# run) and logs every key it gets: KEY:DOWN / KEY:ENTER / KEY:<c>, then LINE:<text>
+# once trusted. Enter on "No, exit" logs EXIT:NO and quits, like the real one.
+# Redraws erase the dialog's own lines in place (cursor up + erase line, as Ink
+# does), so the answered dialog is not left in the pane's scrollback.
+TR="$(mktemp -d)"; mkdir -p "$TR/home" "$TR/state" "$TR/tmp" "$TR/proj"
+cat > "$TR/stub.sh" <<'STUB'
+log="$1"; sel=no
+erase() { printf '\033[1A\033[2K%.0s' $(seq 16); printf '\r'; }
+draw() {
+    printf ' Accessing workspace:\n\n %s\n\n' "$PWD"
+    printf ' Quick safety check: Is this a project you created or one you trust? (Like your\n'
+    printf ' own code, a well-known open source project, or work from your team). If not,\n'
+    printf ' take a moment to review what'"'"'s in this folder first.\n\n'
+    printf ' Claude Code'"'"'ll be able to read, edit, and execute files here.\n\n Security guide\n\n'
+    if [[ $sel == no ]]; then printf ' ❯ No, exit\n   Yes, I trust this folder\n'
+    else printf '   No, exit\n ❯ Yes, I trust this folder\n'; fi
+    printf '\n Enter to confirm · Esc to cancel\n'
+}
+draw
+while IFS= read -rsn1 k; do
+    case "$k" in
+        $'\e') read -rsn2 r; if [[ $r == '[B' ]]; then echo KEY:DOWN >> "$log"; sel=yes; erase; draw; else echo "KEY:ESC$r" >> "$log"; fi ;;
+        '') echo KEY:ENTER >> "$log"; [[ $sel == yes ]] && break; echo EXIT:NO >> "$log"; exit 1 ;;
+        *) echo "KEY:$k" >> "$log" ;;
+    esac
+done
+erase; printf '> ready\n'
+while IFS= read -r line; do echo "LINE:$line" >> "$log"; done
+STUB
+tx() { ( export HOME="$TR/home" QUINTET_HOME="$TR/home/.quintet" QUINTET_STATE_DIR="$TR/state" TMPDIR="$TR/tmp" QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1
+    unset QUINTET_TRUST_CWD; "$@" ); }
+
+# No flag: the task is held; the stub never gets a key.
+out=$(tx env QUINTET_CLAUDE_LAUNCH="bash $TR/stub.sh $TR/k1.log" "$BIN" team 1:claude "trust task one" --name "tr1-$$" --skip-auth-check --cwd "$TR/proj" 2>&1)
+hf="$TR/state/teams/tr1-$$/held/w1-claude.txt"
+echo "$out" | grep -q "w1-claude HELD: TRUST_FOLDER" && echo "$out" | grep -qF "quintet team resume tr1-$$ w1-claude" && echo "$out" | grep -q "tmux attach -t quintet-tr1-$$" \
+    && ok "trust dialog at kickoff: WARN names HELD, attach and resume (A1)" || bad "trust dialog at kickoff: WARN names HELD, attach and resume (A1)"
+[[ ! -s "$TR/k1.log" ]] && ok "held worker received no key, no Enter (A1)" || bad "held worker received no key, no Enter (A1) (got: $(tr '\n' ' ' < "$TR/k1.log"))"
+[[ -f "$hf" && "$(stat -c %a "$hf")" == 600 && "$(stat -c %a "${hf%/*}")" == 700 ]] && grep -q "trust task one" "$hf" && ok "held task saved 0600 in a 0700 dir (A1)" || bad "held task saved 0600 in a 0700 dir (A1)"
+grep -qF "[quintet] w1-claude HELD: TRUST_FOLDER" "$TR/state/teams/tr1-$$/taskboard.md" && ok "taskboard notes the held worker (A1)" || bad "taskboard notes the held worker (A1)"
+grep -q '"trust_cwd": false' "$TR/state/teams/tr1-$$/team.json" && ok "manifest records trust_cwd false (A1)" || bad "manifest records trust_cwd false (A1)"
+out=$(tx "$BIN" team status "tr1-$$" 2>&1)
+echo "$out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)" || bad "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)"
+out=$(tx "$BIN" team send "tr1-$$" w1-claude "hello" 2>&1); rc=$?
+[[ $rc -eq 1 && ! -s "$TR/k1.log" ]] && echo "$out" | grep -q "shows a modal (TRUST_FOLDER)" && ok "team send refuses on a modal, no key sent (A1)" || bad "team send refuses on a modal, no key sent (A1)"
+out=$(tx "$BIN" team resume "tr1-$$" w1-claude 2>&1); rc=$?
+[[ $rc -ne 0 && -f "$hf" && ! -s "$TR/k1.log" ]] && echo "$out" | grep -q "still shows a modal (TRUST_FOLDER)" && ok "resume refuses while the dialog is up (A1)" || bad "resume refuses while the dialog is up (A1)"
+tx "$BIN" team resume "tr1-$$" ../x >/dev/null 2>&1 && bad "resume rejects worker '../x' (A1)" || ok "resume rejects worker '../x' (A1)"
+ttmux send-keys -t "=quintet-tr1-$$:=w1-claude" Down; sleep 0.5; ttmux send-keys -t "=quintet-tr1-$$:=w1-claude" Enter; sleep 1
+out=$(tx "$BIN" team resume "tr1-$$" 2>&1); rc=$?; sleep 1
+[[ $rc -eq 0 && ! -e "$hf" ]] && grep -q "^LINE:.*trust task one" "$TR/k1.log" && ok "resume (all held) sends the task once the dialog is answered (A1)" || bad "resume (all held) sends the task once the dialog is answered (A1)"
+tx "$BIN" team shutdown "tr1-$$" --force >/dev/null 2>&1
+
+# --trust-cwd: Down, check the cursor is on Yes, Enter, then the task.
+out=$(tx env QUINTET_CLAUDE_LAUNCH="bash $TR/stub.sh $TR/k2.log" "$BIN" team 1:claude "trust task two" --name "tr2-$$" --skip-auth-check --cwd "$TR/proj" --trust-cwd 2>&1); sleep 1
+[[ "$(sed -n 1p "$TR/k2.log" 2>/dev/null)" == KEY:DOWN && "$(sed -n 2p "$TR/k2.log" 2>/dev/null)" == KEY:ENTER ]] && sed -n 3p "$TR/k2.log" | grep -q "^LINE:.*trust task two" \
+    && ok "--trust-cwd: Down+Enter, then the task arrives (A1)" || bad "--trust-cwd: Down+Enter, then the task arrives (A1) (got: $(tr '\n' ' ' < "$TR/k2.log" 2>/dev/null | cut -c1-80))"
+[[ ! -e "$TR/state/teams/tr2-$$/held/w1-claude.txt" ]] && ! echo "$out" | grep -q HELD && grep -q '"trust_cwd": true' "$TR/state/teams/tr2-$$/team.json" && ok "--trust-cwd: nothing held, manifest records trust_cwd true (A1)" || bad "--trust-cwd: nothing held, manifest records trust_cwd true (A1)"
+tx "$BIN" team shutdown "tr2-$$" --force >/dev/null 2>&1
+
+# --trust-cwd answers only claude: a non-claude worker on the same screen is held.
+out=$(tx env QUINTET_CODEX_LAUNCH="bash $TR/stub.sh $TR/k3.log" "$BIN" team 1:codex "trust task three" --name "tr3-$$" --skip-auth-check --cwd "$TR/proj" --trust-cwd 2>&1)
+[[ ! -s "$TR/k3.log" && -f "$TR/state/teams/tr3-$$/held/w1-codex.txt" ]] && echo "$out" | grep -q "w1-codex HELD: TRUST_FOLDER" && ok "--trust-cwd does not answer a non-claude worker (A1)" || bad "--trust-cwd does not answer a non-claude worker (A1)"
+tx "$BIN" team shutdown "tr3-$$" --force >/dev/null 2>&1
+
+# Old wording is still detected; --force sends anyway.
+tx env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "tr4-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+tx "$BIN" team send "tr4-$$" w1-claude "printf 'Do you trust this folder? [y/N]: '" >/dev/null 2>&1; sleep 1
+out=$(tx "$BIN" team status "tr4-$$" 2>&1)
+echo "$out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "old 'Do you trust this folder?' wording still detected (A1)" || bad "old 'Do you trust this folder?' wording still detected (A1)"
+tx "$BIN" team send "tr4-$$" w1-claude "echo forced > $TR/forced" >/dev/null 2>&1 && bad "send without --force refused on old wording (A1)" || ok "send without --force refused on old wording (A1)"
+tx "$BIN" team send "tr4-$$" w1-claude "echo forced > $TR/forced" --force >/dev/null 2>&1; sleep 1
+[[ "$(cat "$TR/forced" 2>/dev/null)" == forced ]] && ok "send --force types through a modal (A1)" || bad "send --force types through a modal (A1)"
+tx "$BIN" team shutdown "tr4-$$" --force >/dev/null 2>&1
+
+# Layout check: the cursor must be on the asked-for line, with No directly above Yes.
+dlg=$' Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n'
+_quintet_trust_dialog_selected "$dlg" no && ! _quintet_trust_dialog_selected "$dlg" yes && ok "layout check: cursor on 'No, exit' (A1)" || bad "layout check: cursor on 'No, exit' (A1)"
+_quintet_trust_dialog_selected $'   No, exit\n ❯ Yes, I trust this folder\n' yes && ok "layout check: cursor on 'Yes, I trust this folder' (A1)" || bad "layout check: cursor on 'Yes, I trust this folder' (A1)"
+! _quintet_trust_dialog_selected $' ❯ No, exit\n   Maybe\n   Yes, I trust this folder\n' no && ok "layout check: an extra option breaks the match (A1)" || bad "layout check: an extra option breaks the match (A1)"
+rm -rf "$TR"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

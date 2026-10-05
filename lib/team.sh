@@ -77,6 +77,8 @@ _quintet_parse_spec() {
 
 # quintet_team_start <spec> <task> [--cwd dir] [--name name] [--tasks "t1||t2||..."]
 # --tasks lets the caller hand each worker a distinct, pre-decomposed subtask.
+# --trust-cwd lets the kickoff answer Claude's first-run "trust this folder"
+# dialog with Yes (only that exact dialog); without it the task is held.
 quintet_team_start() {
     quintet_tmux_available || die "tmux is not installed (required for team mode): see https://github.com/tmux/tmux"
     local spec="" task="" cwd="$PWD" name="" tasks_blob=""
@@ -86,6 +88,7 @@ quintet_team_start() {
     # (resolved per worker by quintet_resolve_model/_effort, decision 3).
     local model_map="" model_bare="" effort_map="" effort_bare=""
     local safe_mode="${QUINTET_SAFE_MODE:-false}"
+    local trust_cwd="${QUINTET_TRUST_CWD:-false}"
 
     # First two positionals are spec + task; rest are flags.
     [[ $# -ge 1 ]] || die "team start: missing spec (e.g. 2:claude,1:qwen)"
@@ -100,11 +103,13 @@ quintet_team_start() {
             --skip-auth-check)  skip_auth=true; shift ;;
             --no-mcp)           no_mcp=true; shift ;;
             --safe)             safe_mode=true; shift ;;
+            --trust-cwd)        trust_cwd=true; shift ;;
             --model)            need_arg "$1" $#; quintet_parse_cli_value --model "$2" model_map model_bare; shift 2 ;;
             --effort)           need_arg "$1" $#; quintet_parse_cli_value --effort "$2" effort_map effort_bare; shift 2 ;;
             *) die "unknown team flag: $1" ;;
         esac
     done
+    [[ "$trust_cwd" == true ]] || trust_cwd=false
     [[ -n "$spec" ]] || die "team start: missing spec (e.g. 2:claude,1:qwen)"
     [[ -n "$task" ]] || die "team start: missing task description"
     [[ -d "$cwd" ]]  || die "team start: --cwd not a directory: $cwd"
@@ -270,8 +275,10 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
         worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}"), \"effort\": $(json_escape "${effort:-default}"), \"no_mcp_effective\": $(json_escape "$mcp_eff")}"
 
-        # Defer task injection: warm up the REPL first, then send.
-        ( sleep "$(quintet_provider_warmup "$provider")"; quintet_window_send "$name" "$worker_name" "$injected" ) &
+        # Defer task injection: warm up the REPL first, then send only if no
+        # first-run dialog is showing (Enter would answer it, e.g. "No, exit").
+        ( sleep "$(quintet_provider_warmup "$provider")"
+          _quintet_team_kickoff "$name" "$worker_name" "$provider" "$trust_cwd" "$injected" ) &
         idx=$((idx+1))
     done
 
@@ -301,6 +308,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "session": %s,\n' "$(json_escape "$(quintet_tmux_session "$name")")"
         printf '  "no_mcp": %s,\n'  "$no_mcp"
         printf '  "safe_mode": %s,\n' "$safe_mode"
+        printf '  "trust_cwd": %s,\n' "$trust_cwd"
         printf '  "started": %s,\n' "$(json_escape "$(now_iso)")"
         printf '  "goal": %s,\n'    "$(json_escape "$task")"
         printf '  "workers": [%s]\n' "$worker_json"
@@ -341,7 +349,7 @@ _quintet_detect_worker_modal() {
     tail_buf="$(printf '%s\n' "$buf" | grep -v '^[[:space:]]*$' | tail -n 15)"
     [[ -z "$tail_buf" ]] && return 1
 
-    if echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors' >/dev/null 2>&1; then
+    if echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors|Is this a project you created or one you trust|Yes, I trust this folder|trust the files in this folder|trust the contents of this directory' >/dev/null 2>&1; then
         echo "TRUST_FOLDER"
         return 0
     elif echo "$tail_buf" | grep -Ei 'allow tool call|approve.*tool|\[y/N\]|\(y/n\)|do you want to proceed|run command\?' >/dev/null 2>&1; then
@@ -355,6 +363,111 @@ _quintet_detect_worker_modal() {
         return 0
     fi
     return 1
+}
+
+# _quintet_trust_dialog_selected <capture> <line> — 0 when the capture shows
+# Claude's trust dialog layout ("No, exit" directly above "Yes, I trust this
+# folder", ignoring blank rows) and the ❯ cursor is on <line> ("no" or "yes").
+_quintet_trust_dialog_selected() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | awk -v want="$2" '
+        prev ~ /^[[:space:]]*(❯[[:space:]]*)?No, exit[[:space:]]*$/ &&
+        $0 ~ /^[[:space:]]*(❯[[:space:]]*)?Yes, I trust this folder[[:space:]]*$/ {
+            n = (prev ~ /❯/); y = ($0 ~ /❯/)
+            if (want == "yes" ? (y && !n) : (n && !y)) found = 1
+        }
+        { prev = $0 }
+        END { exit !found }'
+}
+
+# _quintet_team_hold <team> <worker> <modal> <text> — keep <text> in
+# held/<worker>.txt (0600 in a 0700 dir, written via temp + rename so a planted
+# symlink is replaced, not followed), note it on the taskboard and tell the user
+# how to resume.
+_quintet_team_hold() {
+    local team="$1" worker="$2" modal="$3" text="$4" tdir hdir tmp
+    tdir="$(_quintet_team_dir "$team")"; hdir="${tdir}/held"
+    quintet_state_guard "$team"
+    quintet_refuse_symlink "$hdir" "held-task dir"
+    mkdir -m 700 "$hdir" 2>/dev/null   # may already exist (another held worker)
+    [[ -d "$hdir" && ! -L "$hdir" ]] && chmod 700 "$hdir" || die "team start: cannot create $hdir"
+    tmp="$(mktemp "${hdir}/.${worker}.XXXXXX")" || die "team start: cannot write held task for $worker"
+    printf '%s\n' "$text" > "$tmp" && chmod 600 "$tmp" && _quintet_rename "$tmp" "${hdir}/${worker}.txt" \
+        || { rm -f -- "$tmp"; die "team start: cannot write held task for $worker"; }
+    [[ -L "${tdir}/taskboard.md" ]] || echo "[quintet] ${worker} HELD: ${modal}" >> "${tdir}/taskboard.md"
+    log WARN "${worker} HELD: ${modal} on screen, task not sent. Attach: tmux attach -t $(quintet_tmux_session "$team") (answer it), then: quintet team resume ${team} ${worker}"
+}
+
+# _quintet_team_kickoff <team> <worker> <provider> <trust_cwd> <text> — wait for
+# the pane to draw (up to ~20s), then send <text> unless a modal is showing.
+# With trust_cwd, a claude worker on the exact trust dialog gets Down (checked to
+# land on "Yes, I trust this folder") and Enter; anything else is held.
+_quintet_team_kickoff() {
+    local team="$1" worker="$2" provider="$3" trust_cwd="$4" text="$5" buf modal rc i
+    for ((i=0; i<40; i++)); do
+        buf="$(quintet_window_capture "$team" "$worker" 40)" && [[ "$buf" == *[![:space:]]* ]] && break
+        sleep 0.5
+    done
+    modal="$(_quintet_detect_worker_modal "$team" "$worker")"; rc=$?
+    [[ $rc -eq 1 ]] && { quintet_window_send "$team" "$worker" "$text"; return; }
+    [[ $rc -eq 2 ]] && modal="INSPECTION_ERROR"
+    if [[ "$modal" == TRUST_FOLDER && "$trust_cwd" == true && "$provider" == claude ]] \
+        && _quintet_trust_dialog_selected "$(quintet_window_capture "$team" "$worker" 40)" no; then
+        quintet_window_key "$team" "$worker" Down
+        sleep 0.5
+        if _quintet_trust_dialog_selected "$(quintet_window_capture "$team" "$worker" 40)" yes; then
+            log INFO "${worker}: answering the trust dialog with 'Yes, I trust this folder' (--trust-cwd)"
+            quintet_window_key "$team" "$worker" Enter
+            sleep "$(quintet_provider_warmup "$provider")"
+            modal="$(_quintet_detect_worker_modal "$team" "$worker")"; rc=$?
+            [[ $rc -eq 1 ]] && { quintet_window_send "$team" "$worker" "$text"; return; }
+            [[ $rc -eq 2 ]] && modal="INSPECTION_ERROR"
+        fi
+    fi
+    _quintet_team_hold "$team" "$worker" "$modal" "$text"
+}
+
+# quintet_team_resume <team> [worker] — send held kickoff tasks (all, or one
+# worker's) whose pane no longer shows a modal; refuse the rest.
+quintet_team_resume() {
+    local name="${1:-}" only="${2:-}"
+    [[ -n "$name" ]] || die "usage: quintet team resume <name> [worker]"
+    quintet_validate_team_name "$name"
+    [[ -z "$only" || "$only" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "team resume: invalid worker name '$only'"
+    quintet_session_exists "$name" || die "team '$name' is not running"
+    quintet_state_guard "$name"
+    local hdir; hdir="$(_quintet_team_dir "$name")/held"
+    quintet_refuse_symlink "$hdir" "held-task dir"
+    local -a files=()
+    if [[ -n "$only" ]]; then
+        [[ -f "${hdir}/${only}.txt" ]] || die "team resume: no held task for '$only' in team '$name'"
+        files=( "${hdir}/${only}.txt" )
+    elif [[ -d "$hdir" ]]; then
+        local f; for f in "$hdir"/*.txt; do [[ -e "$f" ]] && files+=( "$f" ); done
+    fi
+    [[ ${#files[@]} -ge 1 ]] || { log INFO "team '$name' has no held tasks"; return 0; }
+    local f w modal rc failed=0 text
+    for f in "${files[@]}"; do
+        w="$(basename "$f" .txt)"
+        if [[ -L "$f" || ! -f "$f" ]]; then
+            log ERROR "team resume: $w: held file is not a regular file; skipped"; failed=1; continue
+        fi
+        modal="$(_quintet_detect_worker_modal "$name" "$w")"; rc=$?
+        if [[ $rc -eq 0 ]]; then
+            log ERROR "team resume: $w still shows a modal ($modal); answer it first: tmux attach -t $(quintet_tmux_session "$name")"
+            failed=1; continue
+        elif [[ $rc -eq 2 ]]; then
+            log ERROR "team resume: $w: pane capture failed (no such worker window?); task kept in $f"
+            failed=1; continue
+        fi
+        text="$(cat -- "$f")"
+        if quintet_window_send "$name" "$w" "$text"; then
+            rm -f -- "$f"
+            log INFO "resumed ${name}/${w}"
+        else
+            log ERROR "team resume: send to $w failed; task kept in $f"; failed=1
+        fi
+    done
+    return "$failed"
 }
 
 # _quintet_manifest_workers <team> — worker names from team.json, one per line.
@@ -434,7 +547,7 @@ quintet_team_doctor() {
             echo "     Recent pane output:"
             quintet_window_capture "$name" "$w" 6 2>/dev/null | sed 's/^/       | /'
             echo "     Remediation: Attach to resolve: tmux attach -t $(quintet_tmux_session "$name")"
-            echo "                  Or inject answer: quintet team send \"$name\" \"$w\" \"y\""
+            echo "                  Or inject answer: quintet team send \"$name\" \"$w\" \"y\" --force"
         else
             echo "  ✅ Worker '$w': no recognized modal (running: ${cmd:-idle})"
         fi
@@ -483,11 +596,21 @@ quintet_team_capture() {
     fi
 }
 
+# quintet_team_send <name> <worker> <text> [--force] — refuses while the worker
+# shows a recognized modal (the Enter would answer it) unless --force.
 quintet_team_send() {
-    local name="${1:-}" worker="${2:-}" text="${3:-}"
-    [[ -n "$name" && -n "$worker" && -n "$text" ]] || die "usage: quintet team send <name> <worker> <text>"
+    local force=false a modal
+    local -a pos=()
+    for a in "$@"; do
+        if [[ "$a" == --force ]]; then force=true; else pos+=( "$a" ); fi
+    done
+    local name="${pos[0]:-}" worker="${pos[1]:-}" text="${pos[2]:-}"
+    [[ -n "$name" && -n "$worker" && -n "$text" && ${#pos[@]} -eq 3 ]] || die "usage: quintet team send <name> <worker> <text> [--force]"
     quintet_validate_team_name "$name"
     quintet_session_exists "$name" || die "team '$name' is not running"
+    if [[ "$force" != true ]] && modal="$(_quintet_detect_worker_modal "$name" "$worker")"; then
+        die "team send: ${worker} shows a modal (${modal}); the Enter after your text would answer it. Attach (tmux attach -t $(quintet_tmux_session "$name")) or re-run with --force to answer it on purpose"
+    fi
     quintet_window_send "$name" "$worker" "$text" \
         || die "team send: no worker window '$worker' in team '$name' (worker names are exact; see: quintet team status $name)"
     log INFO "sent to ${name}/${worker}"

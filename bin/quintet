@@ -34,18 +34,24 @@ quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, Qwen, an
 
 TEAM MODE (persistent tmux worker teams):
   quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||..."] [--safe]
-                               [--model V] [--effort V] [--no-mcp] [--skip-auth-check]
+                               [--trust-cwd] [--model V] [--effort V] [--no-mcp] [--skip-auth-check]
   quintet team status   <name>
   quintet team doctor   <name>      # modal stalls + manifest/window check
   quintet team capture  <name> [worker] [lines]
-  quintet team send      <name> <worker> "<text>"    # worker = exact name, e.g. w1-claude
+  quintet team send      <name> <worker> "<text>" [--force]  # worker = exact name, e.g. w1-claude
+  quintet team resume    <name> [worker]   # send kickoff tasks held on a dialog (all if no worker)
   quintet team shutdown  <name> [--force]
   quintet team list
 
   <spec> = comma-separated N:provider[:role[:model]] tokens, e.g.  2:claude:implementer,1:agy:stock
 
   --safe       drop the autonomy flags; workers then block on approval prompts,
-               answer them with: quintet team send <name> <worker> "y"
+               answer them with: quintet team send <name> <worker> "y" --force
+  --trust-cwd  answer Claude's first-run "trust this folder" dialog with Yes
+               (env QUINTET_TRUST_CWD=true). Without it, a worker showing any
+               dialog at kickoff is HELD: its task is saved, not typed; answer
+               the dialog, then run: quintet team resume <name> <worker>
+  --force      (send) type even though the worker shows a dialog
   --model/--effort  a bare value (applies to every worker) or provider=value[,provider=value]
                e.g.  --model codex=gpt-6.1-sol,claude=opus
   --no-mcp     disable MCP where the provider supports it (WARN when only partial)
@@ -118,6 +124,7 @@ main() {
                 doctor)   shift; quintet_team_doctor "$@" ;;
                 capture)  shift; quintet_team_capture "$@" ;;
                 send)     shift; quintet_team_send "$@" ;;
+                resume)   shift; quintet_team_resume "$@" ;;
                 shutdown) shift; quintet_team_shutdown "$@" ;;
                 list)     shift; quintet_team_list ;;
                 ""|--help|-h) usage ;;

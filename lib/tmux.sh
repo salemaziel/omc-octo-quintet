@@ -75,6 +75,12 @@ quintet_window_send() {
     qtmux send-keys -t "=${sess}:=${worker}" Enter
 }
 
+# Press one named key (e.g. Down, Enter) in a worker window.
+quintet_window_key() {
+    local team="$1" worker="$2" key="$3" sess; sess=$(quintet_tmux_session "$team")
+    qtmux send-keys -t "=${sess}:=${worker}" "$key"
+}
+
 # Capture the last N lines of a worker window's visible+scrollback buffer.
 quintet_window_capture() {
     local team="$1" worker="$2" lines="${3:-40}" sess; sess=$(quintet_tmux_session "$team")
