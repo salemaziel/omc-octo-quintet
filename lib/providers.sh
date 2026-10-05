@@ -247,9 +247,11 @@ _quintet_cli_map_get() {
 # (e.g. --model --dangerously-skip-permissions), so values must start with a
 # letter or digit (S-L4). Brackets are allowed for Claude aliases like opus[1m].
 quintet_validate_model_value() {
-    local re='^[A-Za-z0-9][][A-Za-z0-9._/@+:=-]*$'
-    [[ "$2" =~ $re ]] \
-        || die "$1: invalid value '$2' (must match $re)"
+    local re='^[A-Za-z0-9][][A-Za-z0-9._/@+:=-]*$' shown
+    [[ "$2" =~ $re ]] && return 0
+    # Echo it escaped and truncated: it may hold control chars or be huge.
+    printf -v shown '%q' "${2:0:40}"; (( ${#2} > 40 )) && shown+="..."
+    die "$1: invalid value ${shown} (must match $re)"
 }
 
 # quintet_parse_cli_value <flag> <value> <map_var> <bare_var>

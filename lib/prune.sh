@@ -10,7 +10,8 @@
 #   2. Scans ${QUINTET_STATE_DIR}/teams/ for dirs whose session quintet-<name> is
 #      not in the inventory (exact match). Each team is checked and deleted under
 #      quintet_lock, and liveness is re-read under the lock. Live teams are NEVER
-#      removed. Dirs whose name fails quintet_validate_team_name are skipped with
+#      removed. A team whose team.json "tmux_socket" names another tmux server
+#      is checked there with has-session; unknown liveness skips it (S-L3). Dirs whose name fails quintet_validate_team_name are skipped with
 #      a WARN and a manual cleanup command. ${QUINTET_HOME}/teams is skipped with
 #      a WARN (nothing writes there; no lock covers it).
 #   3. Scans ${QUINTET_HOME}/debates/ for archives older than N days.
@@ -61,6 +62,27 @@ _quintet_session_inventory() {
     return 1
 }
 
+# _quintet_foreign_session_state <team-dir> <team> — liveness of a team started on
+# another tmux server (team.json "tmux_socket", S-L3). Prints "local" when there
+# is no such field (or no jq) or it names our own socket; else "live", "dead",
+# "unknown", or "invalid" (name fails the charset). Dead only on tmux's no-server,
+# no-socket or no-session errors; any other failure is unknown.
+_quintet_foreign_session_state() {
+    local sock out
+    have_jq && [[ -f "$1/team.json" ]] || { echo local; return 0; }
+    sock="$(jq -r '.tmux_socket // empty' "$1/team.json" 2>/dev/null)" || { echo local; return 0; }
+    [[ -z "$sock" || "$sock" == "${QUINTET_TMUX_SOCKET:-default}" ]] && { echo local; return 0; }
+    [[ "$sock" =~ ^[A-Za-z0-9._-]+$ ]] || { echo invalid; return 0; }
+    [[ "$sock" == "default" ]] && sock=""
+    if out="$(tmux ${sock:+-L "$sock"} has-session -t "=quintet-$2" 2>&1)"; then
+        echo live; return 0
+    fi
+    case "$out" in
+        *"no server running on "*|*"error connecting to "*"(No such file or directory)"*|*"can't find session"*) echo dead ;;
+        *) echo unknown ;;
+    esac
+}
+
 quintet_prune() {
     local days=7 dry_run=false
     while [[ $# -gt 0 ]]; do
@@ -93,7 +115,7 @@ quintet_prune() {
     if [[ -n "${QUINTET_HOME:-}" && -d "${QUINTET_HOME}/teams" && "${QUINTET_HOME}/teams" != "${QUINTET_STATE_DIR}/teams" ]]; then
         log WARN "prune: skipping ${QUINTET_HOME}/teams (not lock-protected); clean it manually if needed"
     fi
-    local tdir tname mtime age
+    local tdir tname mtime age lrc
     if [[ -d "${QUINTET_STATE_DIR}/teams" ]]; then
         for tdir in "${QUINTET_STATE_DIR}/teams"/*; do
             tname="$(basename "$tdir")"
@@ -107,7 +129,9 @@ quintet_prune() {
                 continue
             fi
             grep -qxF -- "quintet-${tname}" <<< "$inventory" && continue
-            if ! quintet_lock "$tname"; then
+            lrc=0; quintet_lock "$tname" || lrc=$?
+            [[ $lrc -eq 2 ]] && die "prune: quintet needs GNU mv or python3 for locks"
+            if [[ $lrc -ne 0 ]]; then
                 log WARN "prune: skipping '$tname' (locked by another quintet process; if none is running, remove the lock: rm -rf -- $(printf '%q' "$(quintet_lock_path "$tname")"))"
                 continue
             fi
@@ -117,6 +141,17 @@ quintet_prune() {
             if grep -qxF -- "quintet-${tname}" <<< "$inventory"; then
                 quintet_unlock "$tname"; continue
             fi
+            # A team started on another tmux socket is live there, not here.
+            case "$(_quintet_foreign_session_state "$tdir" "$tname")" in
+                live)
+                    quintet_unlock "$tname"; continue ;;
+                unknown)
+                    log WARN "prune: skipping '$tname' (cannot tell if its session on the tmux socket in team.json is live)"
+                    quintet_unlock "$tname"; continue ;;
+                invalid)
+                    log WARN "prune: skipping '$tname' (invalid tmux_socket in team.json). Remove manually if stale: rm -rf -- $(printf '%q' "$tdir")"
+                    quintet_unlock "$tname"; continue ;;
+            esac
             if ! mtime="$(_quintet_latest_activity_epoch "$tdir")"; then
                 log WARN "prune: skipping '$tname' (unknown timestamp)"
                 quintet_unlock "$tname"; continue

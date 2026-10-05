@@ -180,7 +180,9 @@ quintet_team_start() {
     # Hold the team lock from the liveness check until the session exists, so a
     # concurrent prune can't delete this team's state in between. The EXIT trap
     # releases it on every die path below.
-    quintet_lock "$name" || die "team start: team '$name' is locked by another quintet process (start or prune in progress). If none is running, remove the lock: rm -rf -- $(printf '%q' "$(quintet_lock_path "$name")")"
+    local lrc=0; quintet_lock "$name" || lrc=$?
+    [[ $lrc -eq 2 ]] && die "team start: quintet needs GNU mv or python3 for locks"
+    [[ $lrc -eq 0 ]] || die "team start: team '$name' is locked by another quintet process (start or prune in progress). If none is running, remove the lock: rm -rf -- $(printf '%q' "$(quintet_lock_path "$name")")"
     local unlock_cmd; unlock_cmd="quintet_unlock $(printf '%q' "$name")"
     # shellcheck disable=SC2064  # expand name now
     trap "$unlock_cmd" EXIT
@@ -329,6 +331,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "name": %s,\n'    "$(json_escape "$name")"
         printf '  "cwd": %s,\n'     "$(json_escape "$cwd")"
         printf '  "session": %s,\n' "$(json_escape "$(quintet_tmux_session "$name")")"
+        printf '  "tmux_socket": %s,\n' "$(json_escape "${QUINTET_TMUX_SOCKET:-default}")"
         printf '  "no_mcp": %s,\n'  "$no_mcp"
         printf '  "safe_mode": %s,\n' "$safe_mode"
         printf '  "trust_cwd": %s,\n' "$trust_cwd"

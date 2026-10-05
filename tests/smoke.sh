@@ -758,6 +758,59 @@ out=$(sx env QUINTET_STATE_DIR="$LK" "$BIN" prune --days 0 2>&1)
 [[ -d "$LK/teams/d" ]] && echo "$out" | grep -qF "rm -rf -- $LK/locks/d.lock" && ok "prune 'locked' WARN prints the manual cleanup path (S-L1)" || bad "prune 'locked' WARN prints the manual cleanup path (S-L1)"
 kill "$lklive" 2>/dev/null; wait "$lklive" 2>/dev/null
 
+# R-L3: no rename primitive (no python3, mv without -T) is a clear error, not "locked".
+NR="$S/norename"; mkdir -p "$NR"
+for f in /usr/bin/* /bin/*; do
+    case "${f##*/}" in python3*|mv) continue ;; esac
+    [[ -e "$NR/${f##*/}" ]] || ln -s "$f" "$NR/${f##*/}"
+done
+printf '#!/bin/sh\necho "mv: invalid option -- T" >&2\nexit 1\n' > "$NR/mv"; chmod +x "$NR/mv"
+out=$(sx env PATH="$S/bin:$NR" QUINTET_STATE_DIR="$S/nrstate" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "nr-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "needs GNU mv or python3 for locks" && ! echo "$out" | grep -q "is locked" && ! ttmux has-session -t "=quintet-nr-$$" 2>/dev/null && ok "team start without GNU mv or python3: clear lock error (R-L3)" || bad "team start without GNU mv or python3: clear lock error (R-L3)"
+mkdir -p "$S/nrstate/teams/nrp-$$"
+out=$(sx env PATH="$S/bin:$NR" QUINTET_STATE_DIR="$S/nrstate" "$BIN" prune --days 0 2>&1); rc=$?
+[[ $rc -eq 1 && -d "$S/nrstate/teams/nrp-$$" ]] && echo "$out" | grep -q "needs GNU mv or python3 for locks" && ok "prune without GNU mv or python3: clear lock error (R-L3)" || bad "prune without GNU mv or python3: clear lock error (R-L3)"
+ttmux kill-session -t "=quintet-nr-$$" 2>/dev/null
+
+# R-L4: 30 concurrent breakers of a stale .break and stale lock: exactly one wins.
+# A cat that pauses after reading a pid widens every check-then-act window.
+mkdir -p "$S/slowcat"; printf '#!/bin/bash\n/usr/bin/cat "$@"; rc=$?\nsleep 0.0$((RANDOM %% 10))\nexit $rc\n' > "$S/slowcat/cat"; chmod +x "$S/slowcat/cat"
+rl4ok=true
+for _r in 1 2 3; do
+    rm -rf "$LK/locks/r.lock" "$LK/locks/r.lock".* "$LK/go" "$LK/won"
+    mkdir -p "$LK/locks/r.lock" "$LK/locks/r.lock.break"; echo "$ldead" > "$LK/locks/r.lock/pid"; echo "$ldead" > "$LK/locks/r.lock.break/pid"
+    rpids=()
+    for _ in $(seq 1 30); do
+        PATH="$S/slowcat:$PATH" QUINTET_STATE_DIR="$LK" bash -c 'source "$1/lib/common.sh"; until [[ -e "$2/go" ]]; do :; done
+            quintet_lock r && { echo "$$" >> "$2/won"; sleep 1; }' quintet-racer "$ROOT" "$LK" 2>/dev/null &
+        rpids+=( $! )
+    done
+    sleep 0.5; touch "$LK/go"; wait "${rpids[@]}"
+    [[ "$(wc -l < "$LK/won" 2>/dev/null)" -eq 1 ]] || rl4ok=false
+done
+$rl4ok && ok "30 concurrent breakers of a stale .break: exactly one holds the lock (R-L4)" || bad "30 concurrent breakers of a stale .break: exactly one holds the lock (R-L4) (last round: $(wc -l < "$LK/won" 2>/dev/null) winners)"
+[[ -z "$(find "$LK/locks" -name '*.dead.*' 2>/dev/null)" ]] && ok "no *.dead.* lock dirs left behind (R-L4)" || bad "no *.dead.* lock dirs left behind (R-L4)"
+
+# S-L3: a team on another tmux socket is checked there. Socket B = $LSOCK.
+out=$(sx env QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/xsstate" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "xs-$$" --skip-auth-check --cwd /tmp 2>&1)
+[[ "$(jq -r .tmux_socket "$S/xsstate/teams/xs-$$/team.json" 2>/dev/null)" == "$LSOCK" ]] && ok "team start records tmux_socket in team.json (S-L3)" || bad "team start records tmux_socket in team.json (S-L3)"
+mkdir -p "$S/xsstate/teams/xn-$$" "$S/xsstate/teams/xd-$$" "$S/xsstate/teams/xi-$$"
+printf '{"tmux_socket": "%s"}\n' "$LSOCK" > "$S/xsstate/teams/xn-$$/team.json"
+printf '{"tmux_socket": "%s"}\n' "${QUINTET_TMUX_SOCKET}-dead" > "$S/xsstate/teams/xd-$$/team.json"
+printf '{"tmux_socket": "../x y"}\n' > "$S/xsstate/teams/xi-$$/team.json"
+out=$(sx env QUINTET_STATE_DIR="$S/xsstate" "$BIN" prune --days 0 2>&1)
+[[ -d "$S/xsstate/teams/xs-$$" ]] && tmux -L "$LSOCK" has-session -t "=quintet-xs-$$" 2>/dev/null && ok "prune on socket A keeps a team live on socket B (S-L3)" || bad "prune on socket A keeps a team live on socket B (S-L3)"
+[[ ! -d "$S/xsstate/teams/xn-$$" ]] && ok "prune removes a team whose session is gone from a live socket B (S-L3)" || bad "prune removes a team whose session is gone from a live socket B (S-L3)"
+[[ ! -d "$S/xsstate/teams/xd-$$" ]] && ok "prune removes a team on a dead socket (S-L3)" || bad "prune removes a team on a dead socket (S-L3)"
+[[ -d "$S/xsstate/teams/xi-$$" ]] && echo "$out" | grep -q "skipping 'xi-$$' (invalid tmux_socket" && ok "prune skips a team with an invalid tmux_socket, with a WARN (S-L3)" || bad "prune skips a team with an invalid tmux_socket, with a WARN (S-L3)"
+tmux -L "$LSOCK" kill-server >/dev/null 2>&1
+sx env QUINTET_STATE_DIR="$S/xsstate" "$BIN" prune --days 0 >/dev/null 2>&1
+[[ ! -d "$S/xsstate/teams/xs-$$" ]] && ok "prune removes the socket-B team once B is gone (S-L3)" || bad "prune removes the socket-B team once B is gone (S-L3)"
+
+# The validator echoes a rejected value escaped (printf %q) and truncated to 40.
+out=$( ( quintet_validate_model_value --model $'-\e[31m'"$(printf 'a%.0s' {1..60})" ) 2>&1 )
+[[ "$out" != *$'\e'* && "$out" == *"\$'-\\E[31m"* && "$out" == *"..."* && "$out" != *"$(printf 'a%.0s' {1..40})"* ]] && ok "validator echo is %q-escaped and truncated (S-L4)" || bad "validator echo is %q-escaped and truncated (S-L4) (got: $(printf '%q' "$out"))"
+
 # S-L2: an old fleet session whose owner pid is alive is not swept.
 sleep 600 & fown=$!
 fl_live="quintet-fleet-$(( $(date +%s) - 7200 ))-${fown}-9"

@@ -104,10 +104,19 @@ quintet_safe_rm_dir() {
 # fails if a non-empty lock exists; an empty leftover dir is replaced).
 # A lock is stale only when its pid is dead (kill -0 fails); there is no age-based
 # breaking. Breaking takes a second lock (<team>.lock.break, made the same way,
-# with its own pid) so two breakers can't both win: rm the stale lock, retry once.
-# A .break dir whose pid is dead is itself stale and is removed. Returns 1 if the
-# lock is held (or can't be made). Dies if a state path is a symlink.
+# with its own pid) so two breakers can't both win: move the stale lock aside, retry
+# once. A .break dir whose pid is dead is itself stale: a breaker claims it (mkdir
+# <team>.lock.break/claim, exclusive), re-checks its pid, and moves it aside. Stale
+# dirs are renamed to a unique *.dead.* name and only then rm'd, so a live dir that
+# replaced a stale one is never removed (R-L4). Returns 1 if the lock is held (or
+# can't be made), 2 if there is no rename primitive (GNU mv or python3). Dies if a
+# state path is a symlink.
 quintet_lock_path() { echo "${QUINTET_STATE_DIR%/}/locks/$1.lock"; }
+
+# _quintet_can_rename — true if _quintet_rename has a method (GNU mv -T or python3).
+_quintet_can_rename() {
+    mv --help 2>&1 | grep -q -- '--no-target-directory' || command -v python3 >/dev/null 2>&1
+}
 
 # _quintet_rename <src> <dst> — rename(2) <src> to <dst>: never follows a <dst>
 # symlink (the link itself is replaced); fails if <dst> is a non-empty dir.
@@ -129,9 +138,20 @@ _quintet_lock_take() {
     return 1
 }
 
+# _quintet_lock_discard <dir> — rename <dir> to a unique <dir>.dead.* name, then
+# rm it. Nonzero (nothing removed) if the rename fails, e.g. <dir> is gone.
+_quintet_lock_discard() {
+    local dead
+    dead="$(mktemp -d "${1}.dead.XXXXXX" 2>/dev/null)" || return 1
+    if _quintet_rename "$1" "$dead"; then rm -rf -- "$dead"; return 0; fi
+    rmdir -- "$dead" 2>/dev/null
+    return 1
+}
+
 quintet_lock() {
     local dir lk pid bpid
     quintet_state_guard
+    _quintet_can_rename || return 2
     dir="${QUINTET_STATE_DIR%/}/locks"; lk="$(quintet_lock_path "$1")"
     mkdir -p "$dir" 2>/dev/null || return 1
     _quintet_lock_take "$lk" && return 0
@@ -142,13 +162,19 @@ quintet_lock() {
         bpid="$(cat "${lk}.break/pid" 2>/dev/null)"
         [[ "$bpid" =~ ^[0-9]+$ ]] || return 1
         kill -0 "$bpid" 2>/dev/null && return 1
+        # One breaker wins the claim. The pid re-check after it catches a claim
+        # that landed in a live .break which replaced the stale one.
+        mkdir -- "${lk}.break/claim" 2>/dev/null || return 1
+        if [[ "$(cat "${lk}.break/pid" 2>/dev/null)" != "$bpid" ]]; then
+            rmdir -- "${lk}.break/claim" 2>/dev/null; return 1
+        fi
         log WARN "removing stale lock-break dir for '$1' (pid $bpid is gone)"
-        rm -rf -- "${lk}.break"
+        _quintet_lock_discard "${lk}.break" || return 1
         _quintet_lock_take "${lk}.break" || return 1
     fi
     if [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$pid" ]]; then
         log WARN "breaking stale lock for '$1' (pid $pid is gone)"
-        rm -rf -- "$lk"
+        _quintet_lock_discard "$lk"
     fi
     if _quintet_lock_take "$lk"; then
         rm -rf -- "${lk}.break"; return 0
