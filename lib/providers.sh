@@ -136,28 +136,33 @@ quintet_provider_oneshot() {
 
     # Build the command (and any env prefix) per provider into an array.
     local -a cmd=()
-    case "$provider" in
-        claude)
-            cmd=(timeout "$timeout_secs" claude -p "$prompt") ;;
-        codex)
-            cmd=(timeout "$timeout_secs" codex exec "$prompt") ;;
-        agy|gemini)
-            cmd=(timeout "$timeout_secs" agy -p "$prompt" --dangerously-skip-permissions --output-format text) ;;
-        copilot)
-            # Forward whichever GitHub token is set (env wins over keychain/gh).
-            if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
-                cmd=(env "COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}")
-            fi
-            cmd+=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps) ;;
-        qwen)
-            # Qwen is a Gemini-CLI fork without --skip-trust; it honors the trust env var.
-            cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
-                 timeout "$timeout_secs" qwen -p "$prompt" --approval-mode yolo -o text) ;;
-        opencode)
-            cmd=(timeout "$timeout_secs" opencode run --pure --auto "$prompt") ;;
-        *)
-            log ERROR "unknown provider for one-shot: $provider"; return 2 ;;
-    esac
+    local custom_cmd_var="QUINTET_$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')_ONESHOT_CMD"
+    if [[ -n "${!custom_cmd_var:-}" ]]; then
+        cmd=(bash -c "${!custom_cmd_var}")
+    else
+        case "$provider" in
+            claude)
+                cmd=(timeout "$timeout_secs" claude -p "$prompt") ;;
+            codex)
+                cmd=(timeout "$timeout_secs" codex exec "$prompt") ;;
+            agy|gemini)
+                cmd=(timeout "$timeout_secs" agy -p "$prompt" --dangerously-skip-permissions --output-format text) ;;
+            copilot)
+                # Forward whichever GitHub token is set (env wins over keychain/gh).
+                if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+                    cmd=(env "COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}")
+                fi
+                cmd+=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps) ;;
+            qwen)
+                # Qwen is a Gemini-CLI fork without --skip-trust; it honors the trust env var.
+                cmd=(env GEMINI_CLI_TRUST_WORKSPACE=true QWEN_CLI_TRUST_WORKSPACE=true \
+                     timeout "$timeout_secs" qwen -p "$prompt" --approval-mode yolo -o text) ;;
+            opencode)
+                cmd=(timeout "$timeout_secs" opencode run --pure --auto "$prompt") ;;
+            *)
+                log ERROR "unknown provider for one-shot: $provider"; return 2 ;;
+        esac
+    fi
 
     # Capture stdout (the real answer) and stderr separately so verbose CLI
     # warnings (agy/qwen) don't pollute a successful response. On failure we

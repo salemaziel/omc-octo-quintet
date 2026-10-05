@@ -123,10 +123,97 @@ _quintet_fleet_one() {
     fi
 }
 
+# Internal worker entry point invoked inside tmux windows
+quintet_fleet_worker() {
+    local provider="$1" prompt_file="$2" out_file="$3"
+    [[ -f "$prompt_file" ]] || die "fleet worker: missing prompt file '$prompt_file'"
+    local prompt
+    prompt="$(cat "$prompt_file")"
+    _quintet_fleet_one "$provider" "$prompt" "$out_file"
+}
+
+_quintet_fan_out_tmux() {
+    local prompt="$1" rundir="$2"
+    shift 2
+    local -a providers=("$@")
+
+    local prompt_file="${rundir}/prompt.txt"
+    printf '%s' "$prompt" > "$prompt_file"
+
+    local env_dump="${rundir}/env.sh"
+    export -p | grep -E '^declare -x (QUINTET_|COPILOT_|GEMINI_|QWEN_)' > "$env_dump" 2>/dev/null || true
+
+    local sess="quintet-fleet-$(now_epoch)-$$-${RANDOM}"
+    if ! tmux new-session -d -s "$sess" -c "$PWD" -n "leader" 2>/dev/null; then
+        return 1
+    fi
+
+    log INFO "Fleet session active. View live with: tmux attach -t $sess"
+    printf "Tmux session: tmux attach -t %s\n" "$sess" >&2
+    tmux send-keys -t "${sess}:leader" "printf 'quintet fleet session %s\nProviders: %s\n' '$sess' '${providers[*]}'" Enter
+
+    local p out
+    for p in "${providers[@]}"; do
+        log INFO "dispatching (tmux) → $(quintet_provider_emoji "$p") $p"
+        out="${rundir}/${p}.out"
+        tmux new-window -t "$sess" -n "$p" -c "$PWD" \
+            "bash -c 'if [ -f \"$env_dump\" ]; then source \"$env_dump\"; fi; exec \"${QUINTET_ROOT}/bin/quintet\" __fleet_worker \"$p\" \"$prompt_file\" \"$out\"'"
+    done
+
+    # Poll status files for completion
+    local timeout="${QUINTET_TIMEOUT:-300}"
+    local elapsed=0 all_done
+    while [[ $elapsed -lt $timeout ]]; do
+        all_done=true
+        for p in "${providers[@]}"; do
+            if [[ ! -f "${rundir}/${p}.out.status" ]]; then
+                all_done=false
+                break
+            fi
+        done
+        [[ "$all_done" == "true" ]] && break
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+
+    for p in "${providers[@]}"; do
+        if [[ ! -f "${rundir}/${p}.out.status" ]]; then
+            echo "124:timeout" > "${rundir}/${p}.out.status"
+            echo "Execution timed out in tmux window" >> "${rundir}/${p}.out"
+            log WARN "✗ $(quintet_provider_emoji "$p") $p timed out in tmux"
+        fi
+    done
+
+    tmux kill-session -t "$sess" 2>/dev/null || true
+    return 0
+}
+
 # Fan out a prompt to a set of providers in parallel. Echoes a results dir path.
 # Args: prompt provider-list-string
 _quintet_fan_out() {
     local prompt="$1" provider_arg="$2"
+    local use_tmux=true
+
+    # Check env var toggle
+    if [[ "${QUINTET_FLEET_TMUX:-true}" == "false" || "${QUINTET_FLEET_TMUX:-true}" == "0" ]]; then
+        use_tmux=false
+    fi
+
+    # Check provider_arg for --no-tmux or --tmux
+    if [[ "$provider_arg" == *--no-tmux* ]]; then
+        use_tmux=false
+        provider_arg="${provider_arg//--no-tmux/}"
+    fi
+    if [[ "$provider_arg" == *--tmux* ]]; then
+        use_tmux=true
+        provider_arg="${provider_arg//--tmux/}"
+    fi
+    provider_arg="$(printf '%s' "$provider_arg" | xargs)"
+
+    if ! quintet_tmux_available; then
+        use_tmux=false
+    fi
+
     # Every fleet dispatch is advisory/read-only — frame it so providers answer
     # instead of exploring the repo (the timeout culprit). One choke point covers
     # consult, debate, and review.
@@ -141,11 +228,23 @@ ${prompt}"
 
     local rundir; rundir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-fleet.XXXXXX")"
     local p
-    for p in "${providers[@]}"; do
-        log INFO "dispatching → $(quintet_provider_emoji "$p") $p"
-        _quintet_fleet_one "$p" "$prompt" "${rundir}/${p}.out" &
-    done
-    wait
+    local ran_tmux=false
+
+    if [[ "$use_tmux" == "true" ]]; then
+        if _quintet_fan_out_tmux "$prompt" "$rundir" "${providers[@]}"; then
+            ran_tmux=true
+        else
+            log WARN "failed to initialize tmux fleet session; falling back to direct background subshells"
+        fi
+    fi
+
+    if [[ "$ran_tmux" == "false" ]]; then
+        for p in "${providers[@]}"; do
+            log INFO "dispatching → $(quintet_provider_emoji "$p") $p"
+            _quintet_fleet_one "$p" "$prompt" "${rundir}/${p}.out" &
+        done
+        wait
+    fi
 
     # Apply fallback for any provider that failed transiently.
     for p in "${providers[@]}"; do
@@ -182,7 +281,21 @@ _quintet_render_dir() {
 }
 
 quintet_fleet_parallel() {
-    local prompt="$1" providers="${2:-all}"
+    local prompt="" providers=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
+            --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            *)
+                if [[ -z "$prompt" ]]; then
+                    prompt="$1"
+                elif [[ -z "$providers" ]]; then
+                    providers="$1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "$providers" ]] || providers="all"
     [[ -n "$prompt" ]] || die "fleet: missing prompt"
     local rundir; rundir="$(_quintet_fan_out "$prompt" "$providers")"
     _quintet_render_dir "$rundir"
@@ -190,7 +303,21 @@ quintet_fleet_parallel() {
 }
 
 quintet_fleet_review() {
-    local target="$1" providers="${2:-all}"
+    local target="" providers=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
+            --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            *)
+                if [[ -z "$target" ]]; then
+                    target="$1"
+                elif [[ -z "$providers" ]]; then
+                    providers="$1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "$providers" ]] || providers="all"
     [[ -n "$target" ]] || die "fleet review: missing target (a diff, file path, or description)"
     local prompt
     prompt="You are performing a focused code review. Identify correctness bugs, security issues, and risky patterns. Be specific (file:line where possible) and rank findings by severity. Do not restate the code. Review target:
@@ -204,7 +331,21 @@ ${target}"
 # is persisted under $QUINTET_HOME/debates/<ts>/ so the raw arguments survive — not
 # just whatever the orchestrator chooses to summarize.
 quintet_fleet_debate() {
-    local question="$1" providers="${2:-all}"
+    local question="" providers=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
+            --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
+            *)
+                if [[ -z "$question" ]]; then
+                    question="$1"
+                elif [[ -z "$providers" ]]; then
+                    providers="$1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "$providers" ]] || providers="all"
     [[ -n "$question" ]] || die "fleet debate: missing question"
 
     # Seconds-resolution ts alone can collide if two debates start in the same

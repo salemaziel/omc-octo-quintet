@@ -74,6 +74,17 @@ else
     rm -f "$marker"; rm -rf "$QUINTET_STATE_DIR"
 fi
 
+echo "── 4. fleet tmux & fallback execution ──"
+export QUINTET_CLAUDE_ONESHOT_CMD='echo "mock claude fleet answer"'
+out_notmux=$("$BIN" fleet --no-tmux "test prompt" claude 2>&1)
+echo "$out_notmux" | grep -q "mock claude fleet answer" && ok "fleet --no-tmux executed" || bad "fleet --no-tmux executed"
+
+if command -v tmux >/dev/null 2>&1; then
+    out_tmux=$("$BIN" fleet "test prompt" claude 2>&1)
+    echo "$out_tmux" | grep -q "mock claude fleet answer" && ok "fleet tmux execution succeeded" || bad "fleet tmux execution succeeded"
+    echo "$out_tmux" | grep -q "Tmux session:" && ok "fleet outputs tmux attach command" || bad "fleet outputs tmux attach command"
+fi
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

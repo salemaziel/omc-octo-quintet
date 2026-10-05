@@ -106,6 +106,7 @@ main() {
         doctor)        cmd_doctor ;;
         providers)     cmd_providers ;;
         roles)         quintet_role_list ;;
+        __fleet_worker) quintet_fleet_worker "$@" ;;
         version|-v|--version) echo "quintet ${VERSION}" ;;
         help|-h|--help|"") usage ;;
         *) log ERROR "unknown command: $cmd"; usage; exit 1 ;;
