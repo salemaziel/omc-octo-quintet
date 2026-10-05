@@ -985,6 +985,32 @@ _quintet_trust_dialog_selected $'   No, exit\n ❯ Yes, I trust this folder\n' y
 ! _quintet_trust_dialog_selected $' ❯ No, exit\n   Maybe\n   Yes, I trust this folder\n' no && ok "layout check: an extra option breaks the match (A1)" || bad "layout check: an extra option breaks the match (A1)"
 rm -rf "$TR"
 
+echo "── 15. tmux -c start directories are not format-expanded ──"
+# tmux format-expands -c, so an unescaped dir "m#(touch …)n" runs the touch (A1b).
+# Own socket, started from inside the sandbox, so a stray #() job would land there.
+H="$(mktemp -d)"; mkdir -p "$H/home/.claude" "$H/tmp" "$H/bin" "$H/srv"; touch "$H/home/.claude/.credentials.json"
+printf '#!/bin/sh\nexit 99\n' > "$H/bin/claude"; chmod +x "$H/bin/claude"
+HSOCK="${QUINTET_TMUX_SOCKET}-hash"; hmark="qpwned$$"
+trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; tmux -L "$ESOCK" kill-server >/dev/null 2>&1; tmux -L "$LSOCK" kill-server >/dev/null 2>&1; tmux -L "$HSOCK" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ESOCK" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$LSOCK" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$HSOCK"' EXIT
+hx() { ( cd "$H/srv" && export PATH="$H/bin:/usr/bin:/bin" HOME="$H/home" QUINTET_HOME="$H/home/.quintet" QUINTET_STATE_DIR="$H/state" TMPDIR="$H/tmp" QUINTET_TMUX_SOCKET="$HSOCK"
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_TRUST_CWD; "$@" ); }
+hdir="$H/m#(touch $hmark)n #{session_name} x##y tr#"; mkdir -p "$hdir"
+hpwned() { find "$H" "$HOME" "$ROOT" "$PWD" / -maxdepth 1 -name "$hmark" 2>/dev/null | grep -q . || find "$H" -name "$hmark" 2>/dev/null | grep -q .; }
+hx env QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "hash-$$" --skip-auth-check --cwd "$hdir" >/dev/null 2>&1
+sleep 1
+lp="$(tmux -L "$HSOCK" list-panes -t "=quintet-hash-$$:=leader" -F '#{pane_current_path}' 2>/dev/null)"
+wp="$(tmux -L "$HSOCK" list-panes -t "=quintet-hash-$$:=w1-claude" -F '#{pane_current_path}' 2>/dev/null)"
+[[ "$lp" == "$hdir" && "$wp" == "$hdir" ]] && ok "team --cwd with '#(…)', '#{…}', '##', trailing '#': leader and worker cwd is the literal dir (A1b)" || bad "team --cwd with '#' chars: literal pane cwd (A1b) (got '$lp' / '$wp')"
+hx "$BIN" team shutdown "hash-$$" --force >/dev/null 2>&1
+fout=$(cd "$hdir" && hx env QUINTET_CLAUDE_ONESHOT_CMD='echo "fcwd=$PWD"' bash -c 'cd "$1" && "$2" fleet hi claude' _ "$hdir" "$BIN" 2>&1)
+echo "$fout" | grep -q "Tmux session:" && echo "$fout" | grep -qxF "fcwd=$hdir" && ok "fleet from a '#(…)' \$PWD: tmux worker runs in the literal dir (A1b)" || bad "fleet from a '#(…)' \$PWD: tmux worker runs in the literal dir (A1b)"
+! hpwned && ok "no '#(…)' in a start dir ran (A1b)" || bad "no '#(…)' in a start dir ran (A1b)"
+mkdir -p "$H/s#[fg=red]t"
+out=$(hx "$BIN" team 1:claude "t" --name "hst-$$" --skip-auth-check --cwd "$H/s#[fg=red]t" 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -qF "contains '#['" && ! tmux -L "$HSOCK" has-session -t "=quintet-hst-$$" 2>/dev/null && ok "team --cwd containing '#[' is refused before any session (A1b)" || bad "team --cwd containing '#[' is refused before any session (A1b)"
+tmux -L "$HSOCK" kill-server >/dev/null 2>&1
+rm -rf "$H"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

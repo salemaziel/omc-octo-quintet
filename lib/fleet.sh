@@ -209,8 +209,12 @@ _quintet_fan_out_tmux() {
     local prompt_file="${rundir}/prompt.txt"
     printf '%s' "$prompt" > "$prompt_file"
 
+    # tmux format-expands -c; a $PWD with "#[" can't be escaped, so use the
+    # direct path (the caller falls back when this returns 1).
+    local cwd_esc
+    cwd_esc="$(quintet_tmux_fmt_escape "$PWD")" || { log WARN "fleet: \$PWD contains '#[', which tmux can't use literally"; return 1; }
     local sess; sess="quintet-fleet-$(now_epoch)-$$-${RANDOM}"
-    if ! qtmux new-session -d -s "$sess" -c "$PWD" -n "leader" 2>/dev/null; then
+    if ! qtmux new-session -d -s "$sess" -c "$cwd_esc" -n "leader" 2>/dev/null; then
         return 1
     fi
     # This runs inside the caller's $(...), so the traps live in that subshell.
@@ -241,13 +245,13 @@ _quintet_fan_out_tmux() {
         out="${rundir}/${p}.out"
         envf="${rundir}/${p}.env"
         quintet_write_worker_env "$p" "$envf" || { log ERROR "fleet: cannot write env file for $p"; continue; }
-        qtmux new-window -d -t "=$sess" -n "$p" -c "$PWD" sleep 86400 \
+        qtmux new-window -d -t "=$sess" -n "$p" -c "$cwd_esc" sleep 86400 \
             && qtmux set-option -w -t "=${sess}:=${p}" remain-on-exit on >/dev/null \
             || { log ERROR "fleet: cannot create tmux window for $p"; continue; }
         # env -i: the worker sees only the env file and the pane's own
         # TERM/TMUX/TMUX_PANE, not the tmux server's global environment (S-M1, R-M1).
         # shellcheck disable=SC2016  # $1/$@ expand in the worker's bash
-        qtmux respawn-pane -k -t "=${sess}:=${p}" -c "$PWD" \
+        qtmux respawn-pane -k -t "=${sess}:=${p}" -c "$cwd_esc" \
             "${QUINTET_PANE_ENV_I[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
             quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp" \
             || { log ERROR "fleet: cannot start worker for $p"; qtmux kill-window -t "=${sess}:=${p}" 2>/dev/null; }

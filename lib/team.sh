@@ -114,6 +114,7 @@ quintet_team_start() {
     [[ -n "$task" ]] || die "team start: missing task description"
     [[ -d "$cwd" ]]  || die "team start: --cwd not a directory: $cwd"
     cwd="$(cd "$cwd" && pwd)"
+    quintet_tmux_fmt_escape "$cwd" >/dev/null || die "team start: --cwd contains '#[', which tmux can't use literally: $cwd"
 
     # Parse in a command substitution and check its status: a die() inside the
     # parser only exits that subshell, so a bad later token must abort here.

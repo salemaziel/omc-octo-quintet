@@ -16,6 +16,15 @@ qtmux() { tmux ${QUINTET_TMUX_SOCKET:+-L "$QUINTET_TMUX_SOCKET"} "$@"; }
 
 quintet_tmux_session() { echo "quintet-$1"; }   # team name -> session name
 
+# quintet_tmux_fmt_escape <dir> — print <dir> escaped for tmux's -c, which
+# format-expands its argument: a dir named "m#(cmd)n" would run cmd. "##" is a
+# literal "#". tmux copies a "#…#[" run as-is (style syntax), so "##" can't
+# escape it: a dir containing "#[" is refused (returns 1, prints nothing).
+quintet_tmux_fmt_escape() {
+    [[ "$1" == *'#['* ]] && return 1
+    printf '%s' "${1//#/##}"
+}
+
 # Pane start prefix for workers: /bin/sh copies the TERM, TMUX and TMUX_PANE that
 # tmux set for this pane into an otherwise empty environment (env -i), then runs
 # the rest of the argv. Workers get tmux's terminal, never the caller's (R-M1).
@@ -33,11 +42,12 @@ quintet_session_exists() {
 
 # Create the detached session for a team (idempotent). $2 = working dir.
 quintet_session_create() {
-    local team="$1" cwd="${2:-$PWD}" sess; sess=$(quintet_tmux_session "$team")
+    local team="$1" cwd="${2:-$PWD}" sess cwd_esc; sess=$(quintet_tmux_session "$team")
     if quintet_session_exists "$team"; then
         return 0
     fi
-    qtmux new-session -d -s "$sess" -c "$cwd" -n "leader" \
+    cwd_esc="$(quintet_tmux_fmt_escape "$cwd")" || die "tmux: cannot use a directory containing '#[': $cwd"
+    qtmux new-session -d -s "$sess" -c "$cwd_esc" -n "leader" \
         || die "tmux: failed to create session $sess"
     # Leader window is a passive log surface; keep it alive with a shell.
     qtmux send-keys -t "=${sess}:=leader" \
@@ -55,12 +65,14 @@ quintet_session_create() {
 # placeholder, gets remain-on-exit, and only then respawn-pane -k swaps in the
 # worker: a CLI that exits at once can't close the window before the option is set.
 quintet_window_spawn() {
-    local team="$1" worker="$2" cwd="$3" launch="$4" envf="$5" sess; sess=$(quintet_tmux_session "$team")
-    qtmux new-window -t "=$sess" -n "$worker" -c "$cwd" sleep 86400 \
+    local team="$1" worker="$2" cwd="$3" launch="$4" envf="$5" sess cwd_esc; sess=$(quintet_tmux_session "$team")
+    cwd_esc="$(quintet_tmux_fmt_escape "$cwd")" \
+        || { log ERROR "tmux: cannot use a directory containing '#[': $cwd"; return 1; }
+    qtmux new-window -t "=$sess" -n "$worker" -c "$cwd_esc" sleep 86400 \
         || { log ERROR "tmux: failed to create window $worker"; return 1; }
     qtmux set-option -w -t "=${sess}:=${worker}" remain-on-exit on >/dev/null 2>&1 || true
     # shellcheck disable=SC2016  # $1/$2 expand in the worker's bash, not here
-    qtmux respawn-pane -k -t "=${sess}:=${worker}" -c "$cwd" \
+    qtmux respawn-pane -k -t "=${sess}:=${worker}" -c "$cwd_esc" \
         "${QUINTET_PANE_ENV_I[@]}" "${BASH:-bash}" --noprofile --norc -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; exec bash -c "$2"' \
         quintet-worker "$envf" "$launch" \
         || { log ERROR "tmux: failed to start worker $worker"; qtmux kill-window -t "=${sess}:=${worker}" 2>/dev/null; return 1; }
