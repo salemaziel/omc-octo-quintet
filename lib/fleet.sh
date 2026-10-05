@@ -679,6 +679,11 @@ QUESTION: ${question}
 ANSWERS:
 ${answers}
 
+Rules:
+- Change your position only for a specific argument or piece of evidence, and name it. Others agreeing is not a reason.
+- Don't disagree for its own sake. If another answer is right, say so plainly.
+- Label each critique point as a factual error, an omission, or a judgment call.
+
 Critique the other answers — name specifically where they are wrong or incomplete — then give your refined final position. Be concise and concrete. Do not restate the question."
     # Re-resolve: round-1 failures may have opened a circuit breaker.
     _quintet_resolve_providers plist "$prov_arg"
