@@ -215,6 +215,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         printf '  "cwd": %s,\n'     "$(json_escape "$cwd")"
         printf '  "session": %s,\n' "$(json_escape "$(quintet_tmux_session "$name")")"
         printf '  "no_mcp": %s,\n'  "$no_mcp"
+        printf '  "safe_mode": %s,\n' "$safe_mode"
         printf '  "started": %s,\n' "$(json_escape "$(now_iso)")"
         printf '  "goal": %s,\n'    "$(json_escape "$task")"
         printf '  "workers": [%s]\n' "$worker_json"

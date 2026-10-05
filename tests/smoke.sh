@@ -70,6 +70,17 @@ echo "── 2f. model & reasoning effort resolution ──"
 [[ "$(_quintet_parse_spec "1:codex:implementer:o3-mini")" == "codex:implementer:o3-mini" ]] && ok "spec parses 1:codex:implementer:o3-mini" || bad "spec parses 1:codex:implementer:o3-mini"
 [[ "$(_quintet_parse_spec "1:claude::haiku")" == "claude:stock:haiku" ]] && ok "spec parses 1:claude::haiku with stock default" || bad "spec parses 1:claude::haiku with stock default"
 
+echo "── 2g. tiered permissions & safety mode (--safe) ──"
+[[ "$(quintet_provider_launch_cmd "claude" false "" "" true)" != *"bypassPermissions"* ]] && ok "safe mode omits claude bypassPermissions" || bad "safe mode omits claude bypassPermissions"
+[[ "$(quintet_provider_launch_cmd "codex" false "" "" true)" != *"--yolo"* ]] && ok "safe mode omits codex --yolo" || bad "safe mode omits codex --yolo"
+[[ "$(quintet_provider_launch_cmd "agy" false "" "" true)" != *"--dangerously-skip-permissions"* ]] && ok "safe mode omits agy --dangerously-skip-permissions" || bad "safe mode omits agy --dangerously-skip-permissions"
+[[ "$(quintet_provider_launch_cmd "copilot" false "" "" true)" != *"--allow-all-tools"* ]] && ok "safe mode omits copilot --allow-all-tools" || bad "safe mode omits copilot --allow-all-tools"
+[[ "$(quintet_provider_launch_cmd "qwen" false "" "" true)" != *"--approval-mode yolo"* ]] && ok "safe mode omits qwen --approval-mode yolo" || bad "safe mode omits qwen --approval-mode yolo"
+[[ "$(quintet_provider_launch_cmd "opencode" false "" "" true)" != *"--auto"* ]] && ok "safe mode omits opencode --auto" || bad "safe mode omits opencode --auto"
+QUINTET_SAFE_MODE=true
+[[ "$(quintet_provider_launch_cmd "claude")" != *"bypassPermissions"* ]] && ok "QUINTET_SAFE_MODE=true disables bypassPermissions" || bad "QUINTET_SAFE_MODE=true disables bypassPermissions"
+unset QUINTET_SAFE_MODE
+
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
     echo "  ⚠️  tmux not installed — skipping team lifecycle"
@@ -88,7 +99,7 @@ else
     export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"
-    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp --no-mcp >/dev/null 2>&1 && ok "team start" || bad "team start"
+    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp --no-mcp --safe >/dev/null 2>&1 && ok "team start" || bad "team start"
     sleep 3
     "$BIN" team status "$T" >/dev/null 2>&1 && ok "team status" || bad "team status"
     marker="/tmp/quintet-smoke-$$.txt"; rm -f "$marker"
@@ -97,6 +108,7 @@ else
     [[ -f "$marker" ]] && ok "worker executed injected task" || bad "worker executed injected task"
     grep -E -q '"role"[[:space:]]*:[[:space:]]*"implementer"' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records role" || bad "manifest records role"
     grep -q '"no_mcp": true' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records no_mcp" || bad "manifest records no_mcp"
+    grep -q '"safe_mode": true' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records safe_mode" || bad "manifest records safe_mode"
     grep -q 'role: implementer' "${QUINTET_STATE_DIR}/teams/${T}/taskboard.md" 2>/dev/null && ok "taskboard records role" || bad "taskboard records role"
     [[ -f "${QUINTET_STATE_DIR}/teams/${T}/team.json" ]] && ok "manifest written" || bad "manifest written"
 

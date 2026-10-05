@@ -203,6 +203,13 @@ _quintet_fan_out() {
         provider_arg="${provider_arg//--no-mcp/}"
     fi
 
+    local safe_mode="${QUINTET_SAFE_MODE:-false}"
+    if [[ "$provider_arg" == *--safe* ]]; then
+        safe_mode=true
+        export QUINTET_SAFE_MODE=true
+        provider_arg="${provider_arg//--safe/}"
+    fi
+
     # Check env var toggle
     if [[ "${QUINTET_FLEET_TMUX:-true}" == "false" || "${QUINTET_FLEET_TMUX:-true}" == "0" ]]; then
         use_tmux=false
