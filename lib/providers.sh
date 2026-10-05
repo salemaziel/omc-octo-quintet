@@ -391,8 +391,9 @@ quintet_provider_oneshot() {
     # Capture stdout (the real answer) and stderr separately so verbose CLI
     # warnings (agy/qwen) don't pollute a successful response. On failure we
     # fold stderr in so the reliability layer can classify the error.
+    # _q_errdir: set by the fleet caller to its run dir (C-L1).
     local errfile out code
-    errfile="$(mktemp "${TMPDIR:-/tmp}/quintet-err.XXXXXX")"
+    errfile="$(mktemp "${_q_errdir:-${TMPDIR:-/tmp}}/quintet-err-XXXXXX")"
     if [[ -n "$tee_to" ]]; then
         out="$("${cmd[@]}" 2>"$errfile" | tee -a -- "$tee_to"; exit "${PIPESTATUS[0]}")"; code=$?
     else

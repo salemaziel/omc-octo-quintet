@@ -41,7 +41,7 @@ $BIN team capture export-feat w1-codex 80
 
 ```bash
 # 3. Steer a worker mid-flight
-$BIN team send export-feat w2-agy "skip the legacy path; focus on v2 API"
+$BIN team send export-feat w3-agy "skip the legacy path; focus on v2 API"
 ```
 
 ```bash
@@ -161,8 +161,8 @@ Each worker appends status lines to `taskboard.md` and ends with a `DONE` line. 
 
 ```text
 [w1-codex] serializer implemented in src/export/csv.rs
-[w2-agy] alt approach: stream rows to avoid buffering 10M rows
-[w3-qwen] docs/export.md drafted
+[w3-agy] alt approach: stream rows to avoid buffering 10M rows
+[w4-qwen] docs/export.md drafted
 [w1-codex] DONE
 ```
 
@@ -182,7 +182,7 @@ The user wants a CSV export feature built in parallel. Walk the whole lifecycle:
 
 **3. Launch** with the `team` command above, then immediately `team capture export-feat` to confirm every REPL came up and accepted its task (not a bare shell prompt).
 
-**4. Monitor in a poll loop.** Every ~30s: `team status`, skim `team capture`, read `taskboard.md`. When `w2-agy` drifts into the legacy path, steer it: `team send export-feat w2-agy "skip legacy; v2 API only"`.
+**4. Monitor in a poll loop.** Every ~30s: `team status`, skim `team capture`, read `taskboard.md`. When `w3-agy` drifts into the legacy path, steer it: `team send export-feat w3-agy "skip legacy; v2 API only"`.
 
 **5. Verify, don't trust.** When the taskboard shows `DONE`, open `src/export/csv.rs`, run `cargo test export`, and confirm the docs exist. Only then `team shutdown export-feat`.
 

@@ -73,15 +73,28 @@ _quintet_answers_block() {
     done
 }
 
+# _quintet_token_provider <token> — provider of a [N:]provider[:role[:model]]
+# token ("gemini" -> "agy").
+_quintet_token_provider() {
+    local p="$1"
+    [[ "$p" =~ ^[0-9]+: ]] && p="${p#*:}"
+    p="${p%%:*}"
+    [[ "$p" == "gemini" ]] && p="agy"
+    printf '%s' "$p"
+}
+
 # Resolve a provider list into the array named by <outvar>. Accepts "all", a spec,
 # or explicit names. Keeps ready providers (skips missing/unauthenticated/
-# breaker-open). Must run in the caller's shell so an unsupported-provider die()
-# exits the command instead of a subshell.
+# breaker-open). Duplicates are dropped, first-seen order kept: a fleet runs one
+# worker per provider (window names and .out files are per provider) (C-M2).
+# Must run in the caller's shell so an unsupported-provider die() exits the
+# command instead of a subshell.
 # Args: outvar provider-list-string
 _quintet_resolve_providers() {
     local -n _qrp_out="$1"
     local arg="$2" p p_clean
     local -a candidates=()
+    local -A seen=()
     _qrp_out=()
     if [[ -z "$arg" || "$arg" == "all" ]]; then
         candidates=("${QUINTET_PROVIDERS[@]}")
@@ -92,10 +105,9 @@ _quintet_resolve_providers() {
         arg="${arg//,/ }"
         for p in $arg; do
             [[ "$p" == --* ]] && continue
-            p_clean="$p"
-            [[ "$p_clean" =~ ^[0-9]+: ]] && p_clean="${p_clean#*:}"
-            p_clean="${p_clean%%:*}"
-            [[ "$p_clean" == "gemini" ]] && p_clean="agy"
+            p_clean="$(_quintet_token_provider "$p")"
+            [[ -n "${seen[$p_clean]:-}" ]] && continue
+            seen[$p_clean]=1
             candidates+=( "$p_clean" )
         done
         [[ "${#candidates[@]}" -ge 1 ]] || candidates=("${QUINTET_PROVIDERS[@]}")
@@ -114,15 +126,21 @@ _quintet_resolve_providers() {
 
 # A bare --model/--effort is only unambiguous for a single-provider fleet
 # (decision 3). Bind it to that provider as a map entry so a fallback provider
-# never inherits it; with more than one requested provider, die.
+# never inherits it; with more than one distinct requested provider, die.
 # Args: provider-list-string resolved-provider...
 _quintet_bind_bare_cli() {
     local arg="$1" kind bare_var map_var flag n=0 p
+    local -A seen=()
     shift
     if [[ -z "$arg" || "$arg" == "all" ]]; then
         n=${#QUINTET_PROVIDERS[@]}
     else
-        for p in ${arg//,/ }; do [[ "$p" == --* ]] || n=$((n+1)); done
+        for p in ${arg//,/ }; do
+            [[ "$p" == --* ]] && continue
+            p="$(_quintet_token_provider "$p")"
+            [[ -n "${seen[$p]:-}" ]] && continue
+            seen[$p]=1; n=$((n+1))
+        done
     fi
     for kind in MODEL EFFORT; do
         bare_var="QUINTET_${kind}_CLI"; map_var="QUINTET_${kind}_MAP"
@@ -142,6 +160,9 @@ _quintet_fleet_one() {
     local no_mcp="${4:-${QUINTET_NO_MCP:-false}}" tee_to="${5:-}"
     local resp code start end secs
     start=$(now_epoch)
+    # The one-shot's stderr temp file goes in the run dir (dynamic scope), so an
+    # aborted fleet's rundir cleanup removes it too (C-L1).
+    local _q_errdir; _q_errdir="$(dirname -- "$out")"
     resp=$(quintet_provider_oneshot "$provider" "$prompt" "$no_mcp" "" "" "" "$tee_to"); code=$?
     end=$(now_epoch); secs=$(( end - start ))
     if [[ $code -ne 0 ]]; then
@@ -182,11 +203,15 @@ _quintet_fan_out_tmux() {
         return 1
     fi
     # This runs inside the caller's $(...), so the traps live in that subshell.
-    # On abort: kill the session (workers die with it) and remove the per-worker
-    # env files (A4/A13, M3). The previous traps are restored before returning.
-    local prev_traps; prev_traps="$(trap -p EXIT INT TERM)"
+    # On abort: kill the session (workers die with it) and remove the run dir
+    # (env files, prompt, one-shot stderr files) (A4/A13, M3, C-L1). Before
+    # returning, the traps are reset; a parent's traps are saved and restored
+    # only when not in a subshell (in a subshell, trap -p shows the parent's
+    # traps, and eval-ing them would run the parent's EXIT trap twice, C-L2).
+    local prev_traps=""
+    [[ "$BASH_SUBSHELL" -eq 0 ]] && prev_traps="$(trap -p EXIT INT TERM)"
     local cleanup
-    cleanup="qtmux kill-session -t $(printf '%q' "=$sess") 2>/dev/null; rm -f -- $(printf '%q' "$rundir")/*.env"
+    cleanup="qtmux kill-session -t $(printf '%q' "=$sess") 2>/dev/null; rm -rf -- $(printf '%q' "$rundir")"
     # shellcheck disable=SC2064  # expand sess/rundir now
     trap "$cleanup" EXIT
     # shellcheck disable=SC2064
@@ -261,7 +286,7 @@ _quintet_fan_out_tmux() {
 
     rm -f -- "$rundir"/*.env
     trap - EXIT INT TERM
-    eval "$prev_traps"
+    [[ -n "$prev_traps" ]] && eval "$prev_traps"
     if [[ "${QUINTET_FLEET_KEEP_SESSION:-false}" == "true" ]]; then
         log INFO "fleet session kept: tmux attach -t $sess   (remove: tmux kill-session -t '=$sess')"
     else

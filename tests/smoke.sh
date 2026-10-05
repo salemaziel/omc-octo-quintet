@@ -242,7 +242,7 @@ out=$(HOME="$fh" QUINTET_HOME="$fh/.quintet" "$BIN" debate --no-tmux "hi" 1:bogu
 touch "$fh/.codex/auth.json"
 resolved=$(export PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet"; source "$ROOT/lib/reliability.sh"
     declare -a rp=(); _quintet_resolve_providers rp "1:codex:implementer,codex:reviewer:o3"; echo "${rp[*]}")
-[[ "$resolved" == "codex codex" ]] && ok "fleet 1:codex:implementer resolves to codex" || bad "fleet 1:codex:implementer resolves to codex (got '$resolved')"
+[[ "$resolved" == "codex" ]] && ok "fleet 1:codex:implementer,codex:reviewer resolves to one codex (C-M2)" || bad "fleet 1:codex:implementer,codex:reviewer resolves to one codex (C-M2) (got '$resolved')"
 out=$(PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet" QUINTET_CODEX_ONESHOT_CMD='echo "mock codex answer"' \
     "$BIN" fleet --no-tmux "hi" 1:codex:implementer 2>&1); rc=$?
 [[ $rc -eq 0 ]] && echo "$out" | grep -q "mock codex answer" && ok "fleet runs N:provider:role token" || bad "fleet runs N:provider:role token"
@@ -513,6 +513,8 @@ fleet_sessions() { ttmux list-sessions -F '#{session_name}' 2>/dev/null | grep '
 for _ in $(seq 1 20); do fleet_sessions >/dev/null || break; sleep 0.25; done
 [[ -z "$(fleet_sessions)" ]] && ok "SIGINT mid-poll leaves no quintet-fleet-* session (M3)" || bad "SIGINT mid-poll leaves no quintet-fleet-* session (M3)"
 [[ -z "$(find "$F/tmp" -name '*.env' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no env file" || bad "SIGINT mid-poll leaves no env file"
+[[ -z "$(find "$F/tmp" -mindepth 1 -maxdepth 1 -name 'quintet-fleet.*' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no fleet rundir (C-L1)" || bad "SIGINT mid-poll leaves no fleet rundir (C-L1)"
+[[ -z "$(find "$F/tmp" -name 'quintet-err*' 2>/dev/null)" ]] && ok "SIGINT mid-poll leaves no one-shot errfile (C-L1)" || bad "SIGINT mid-poll leaves no one-shot errfile (C-L1)"
 
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
@@ -650,7 +652,7 @@ for f in --safe --model --effort --no-mcp --tasks --skip-auth-check provider=val
 $uok && ok "usage lists --safe/--model/--effort/--no-mcp/--tasks/--skip-auth-check/provider=value/prune flags" || bad "usage lists the team/fleet/prune flags"
 echo "$uo" | grep -q "deprecated" && ok "usage notes prune --force is deprecated" || bad "usage notes prune --force is deprecated"
 
-# shellcheck stays clean (when installed).
+# Lint gate: shellcheck -S warning must stay clean (when installed).
 if command -v shellcheck >/dev/null 2>&1; then
     [[ -z "$(shellcheck -S warning "$BIN" "$ROOT"/lib/*.sh 2>&1)" ]] && ok "shellcheck -S warning: zero findings" || bad "shellcheck -S warning: zero findings"
 fi
@@ -763,6 +765,61 @@ done
 [[ "$(_quintet_parse_spec "1:codex:stock:gpt-5.1-codex" 2>/dev/null)" == "codex:stock:gpt-5.1-codex" ]] || l4ok=false
 $l4ok && ok "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)" || bad "legitimate model names (ollama:qwen3, gpt-5.1-codex, …) still accepted (S-L4)"
 rm -rf "$S"
+
+echo "── 12. worker exit, duplicate providers, empty team, traps, auth heuristics ──"
+# Sandbox: fake HOME/TMPDIR/state, stub CLIs on a PATH without real provider CLIs.
+C="$(mktemp -d)"; mkdir -p "$C/home/.codex" "$C/home/.claude" "$C/tmp" "$C/state" "$C/bin" "$C/stub"
+touch "$C/home/.codex/auth.json" "$C/home/.claude/.credentials.json"
+printf '#!/bin/bash\necho "stub codex answer"\n' > "$C/bin/codex"; printf '#!/bin/bash\necho "stub claude answer"\n' > "$C/bin/claude"; chmod +x "$C/bin/"*
+printf '#!/bin/bash\ncase " $* " in *" new-window "*) [ -n "$QUINTET_TEST_FAIL_WIN" ] && case " $* " in *" -n $QUINTET_TEST_FAIL_WIN "*) exit 1 ;; esac ;; esac\nexec "%s" "$@"\n' "$(command -v tmux)" > "$C/stub/tmux"; chmod +x "$C/stub/tmux"
+cx() { ( export PATH="$C/bin:/usr/bin:/bin" HOME="$C/home" QUINTET_HOME="$C/home/.quintet" QUINTET_STATE_DIR="$C/state" TMPDIR="$C/tmp"
+    unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_MODEL_CLI QUINTET_MODEL_MAP; "$@" ); }
+
+# C-M1: a worker whose CLI exited is reported, and doctor counts it.
+cx env QUINTET_CLAUDE_LAUNCH='echo exiting-now; exit 3' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "ex-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+sleep 1
+sout=$(cx "$BIN" team status "ex-$$" 2>&1)
+echo "$sout" | grep -q "w1-claude.*EXITED (status 3)" && ok "team status reports an exited worker as EXITED (status 3) (C-M1)" || bad "team status reports an exited worker as EXITED (status 3) (C-M1)"
+dout=$(cx "$BIN" team doctor "ex-$$" 2>&1); drc=$?
+[[ $drc -ne 0 ]] && echo "$dout" | grep -q "Worker 'w1-claude' EXITED (status 3)" && ok "team doctor counts an exited worker as an issue, nonzero (C-M1)" || bad "team doctor counts an exited worker as an issue, nonzero (C-M1)"
+cx "$BIN" team shutdown "ex-$$" --force >/dev/null 2>&1
+
+# C-M2: duplicate providers dedupe; a bare --model binds to the one provider.
+bound=$( ( export QUINTET_MODEL_CLI=m1; unset QUINTET_MODEL_MAP; _quintet_bind_bare_cli "1:codex:implementer,1:codex:reviewer" codex; echo "${QUINTET_MODEL_MAP:-}" ) 2>/dev/null)
+[[ "$bound" == "codex=m1" ]] && ok "bare --model with a duplicated provider binds to it (C-M2)" || bad "bare --model with a duplicated provider binds to it (C-M2)"
+out=$(cx "$BIN" fleet "hi" "1:codex:implementer,1:codex:reviewer" 2>&1)
+[[ "$(echo "$out" | grep -c "codex   \[0:ok\]")" -eq 1 ]] && ! echo "$out" | grep -q "fallback for codex" && ! echo "$out" | grep -q "cannot create tmux window" && ok "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)" || bad "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)"
+
+# C-M3: zero started workers -> nonzero, no session, no team dir, no lock.
+out=$(cx env PATH="$C/stub:$C/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "zero-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "none of the 1 worker(s) started" && ok "team start with zero started workers exits nonzero (C-M3)" || bad "team start with zero started workers exits nonzero (C-M3)"
+! ttmux has-session -t "=quintet-zero-$$" 2>/dev/null && [[ ! -e "$C/state/teams/zero-$$" && ! -e "$C/state/locks/zero-$$.lock" ]] && ok "zero-worker start leaves no session, team dir or lock (C-M3)" || bad "zero-worker start leaves no session, team dir or lock (C-M3)"
+ttmux kill-session -t "=quintet-zero-$$" 2>/dev/null
+
+# C-L2: a caller's EXIT trap runs once, not again inside the fan-out subshell.
+tlog="$C/trap.log"
+cx env QUINTET_CLAUDE_ONESHOT_CMD='echo trap-test' bash -c 'source "$1/lib/common.sh"; source "$1/lib/providers.sh"; source "$1/lib/roles.sh"; source "$1/lib/reliability.sh"
+    source "$1/lib/tmux.sh"; source "$1/lib/team.sh"; source "$1/lib/fleet.sh"
+    trap "echo parent-exit >> \"\$2\"" EXIT; r="$(_quintet_fan_out "hi" claude claude)"; rm -rf -- "$r"' quintet-trap "$ROOT" "$tlog" >/dev/null 2>&1
+[[ "$(grep -c parent-exit "$tlog" 2>/dev/null)" == 1 ]] && ok "caller's EXIT trap runs once around a tmux fan-out (C-L2)" || bad "caller's EXIT trap runs once around a tmux fan-out (C-L2) (ran $(grep -c parent-exit "$tlog" 2>/dev/null)x)"
+
+# C-L5: auth detection needs a prompt shape; success messages don't match.
+modal_of() { ( mtxt="$1"; source "$ROOT/lib/tmux.sh"; source "$ROOT/lib/team.sh"; quintet_window_capture() { printf '%s\n' "$mtxt"; }; _quintet_detect_worker_modal t w ) 2>/dev/null; }
+for neg in "Login successful" "Sign in complete" "Logged in as dev"; do
+    [[ -z "$(modal_of "$neg")" ]] && ok "'$neg' is not AUTH_REQUIRED (C-L5)" || bad "'$neg' is not AUTH_REQUIRED (C-L5)"
+done
+for pos in "Please log in to continue" "Sign in with your browser:" "Login:"; do
+    [[ "$(modal_of "$pos")" == AUTH_REQUIRED ]] && ok "'$pos' is AUTH_REQUIRED (C-L5)" || bad "'$pos' is AUTH_REQUIRED (C-L5)"
+done
+
+# C-L6: the team-runtime skill uses the real worker names for 2:codex,1:agy,1:qwen.
+! grep -q 'w2-agy' "$ROOT/skills/quintet-team-runtime/SKILL.md" && grep -q 'team send export-feat w3-agy' "$ROOT/skills/quintet-team-runtime/SKILL.md" && ok "team-runtime skill sends to w3-agy, not w2-agy (C-L6)" || bad "team-runtime skill sends to w3-agy, not w2-agy (C-L6)"
+
+# G-L1: no comment in this file parses as a shellcheck directive (no errors).
+if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck -S error "$ROOT/tests/smoke.sh" >/dev/null 2>&1 && ok "shellcheck -S error tests/smoke.sh: clean (G-L1)" || bad "shellcheck -S error tests/smoke.sh: clean (G-L1)"
+fi
+rm -rf "$C"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"

@@ -84,6 +84,16 @@ quintet_window_command() {
     qtmux list-panes -t "=${sess}:=${worker}" -F '#{pane_current_command}' 2>/dev/null | head -1
 }
 
+# If a worker window's pane is dead (remain-on-exit), print its exit status
+# ("?" when tmux has none, e.g. killed by a signal) and return 0; else return 1.
+quintet_window_dead_status() {
+    local team="$1" worker="$2" sess out; sess=$(quintet_tmux_session "$team")
+    out="$(qtmux list-panes -t "=${sess}:=${worker}" -F '#{pane_dead} #{pane_dead_status}' 2>/dev/null | head -1)"
+    [[ "$out" == 1* ]] || return 1
+    out="${out#1}"; out="${out# }"
+    echo "${out:-?}"
+}
+
 quintet_session_kill() {
     local team="$1" sess; sess=$(quintet_tmux_session "$team")
     qtmux kill-session -t "=$sess" 2>/dev/null || true

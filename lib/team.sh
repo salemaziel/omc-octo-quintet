@@ -257,6 +257,14 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         idx=$((idx+1))
     done
 
+    # Zero workers started: don't leave a leader-only session behind (C-M3).
+    # The EXIT trap removes the env dir and releases the lock.
+    if [[ $started -eq 0 ]]; then
+        quintet_session_kill "$name"
+        quintet_safe_rm_dir "$tdir" "${QUINTET_STATE_DIR%/}/teams" || log WARN "team start: could not remove $tdir"
+        die "team start: none of the ${#workers[@]} worker(s) started; session and team state removed"
+    fi
+
     local manifest_tmp
     manifest_tmp="$(mktemp "${tdir}/.team.json.XXXXXX")" || die "team start: cannot write ${manifest}"
     {
@@ -294,7 +302,9 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
 # could not be captured (inspection error). Whitespace-only lines are dropped
 # before taking the last 15, so a prompt scrolled above blank rows is still seen.
 # Auth patterns are anchored to prompt shapes (POSIX classes only, no \s) so a
-# log line like "Implemented API key validation" doesn't match.
+# log line like "Implemented API key validation" doesn't match. A log-in/sign-in
+# line must be the whole prompt ("Please log in to continue", "Sign in:"), so
+# "Login successful" / "Sign in complete" don't match.
 _quintet_detect_worker_modal() {
     local team="$1" worker="$2"
     local buf
@@ -310,7 +320,7 @@ _quintet_detect_worker_modal() {
     elif echo "$tail_buf" | grep -Ei 'allow tool call|approve.*tool|\[y/N\]|\(y/n\)|do you want to proceed|run command\?' >/dev/null 2>&1; then
         echo "TOOL_APPROVAL"
         return 0
-    elif echo "$tail_buf" | grep -Ei -e '^[[:space:]]*(Please )?(log ?in|sign in)' -e 'Enter (your )?(API key|token)' -e '^[[:space:]]*(login|authentication) required' >/dev/null 2>&1; then
+    elif echo "$tail_buf" | grep -Ei -e '^[[:space:]]*(please[[:space:]]+)?(log[[:space:]]?in|sign[[:space:]]in)([[:space:]]+(to|with|using|via)[[:space:]].*)?[[:space:]]*[:?.!>]*[[:space:]]*$' -e 'Enter (your )?(API key|token)' -e '^[[:space:]]*(login|authentication) required' >/dev/null 2>&1; then
         echo "AUTH_REQUIRED"
         return 0
     elif echo "$tail_buf" | grep -Ei 'press enter to continue|press any key' >/dev/null 2>&1; then
@@ -340,9 +350,13 @@ quintet_team_status() {
     [[ -f "${tdir}/team.json" ]] && have_jq && \
         echo "Goal: $(jq -r '.goal' "${tdir}/team.json")"
     echo "Workers:"
-    local w cmd modal rc
+    local w cmd modal rc dst
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
+        if dst="$(quintet_window_dead_status "$name" "$w")"; then
+            printf '  • %-18s ❌ EXITED (status %s)\n' "$w" "$dst"
+            continue
+        fi
         cmd="$(quintet_window_command "$name" "$w")"
         modal="$(_quintet_detect_worker_modal "$name" "$w")"; rc=$?
         if [[ $rc -eq 2 ]]; then
@@ -369,11 +383,18 @@ quintet_team_doctor() {
 
     echo "==> Diagnosing team: $name (session: $(quintet_tmux_session "$name"))"
     local issues=0
-    local w cmd modal rc
+    local w cmd modal rc dst
     local -a windows=()
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
         windows+=( "$w" )
+        if dst="$(quintet_window_dead_status "$name" "$w")"; then
+            issues=$((issues + 1))
+            echo "  ❌ Worker '$w' EXITED (status $dst); its CLI is no longer running"
+            echo "     Recent pane output:"
+            quintet_window_capture "$name" "$w" 6 2>/dev/null | sed 's/^/       | /'
+            continue
+        fi
         cmd="$(quintet_window_command "$name" "$w")"
         modal="$(_quintet_detect_worker_modal "$name" "$w")"; rc=$?
         if [[ $rc -eq 2 ]]; then
@@ -409,7 +430,7 @@ quintet_team_doctor() {
     fi
 
     if [[ $issues -eq 0 ]]; then
-        echo "==> No recognized modal stalls and workers match the manifest (heuristic: unknown prompts are not detected)."
+        echo "==> No exited workers, no recognized modal stalls, and workers match the manifest (heuristic: unknown prompts are not detected)."
         return 0
     else
         echo "==> Total issues detected: $issues"
