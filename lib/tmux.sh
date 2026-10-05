@@ -78,13 +78,41 @@ quintet_window_spawn() {
         || { log ERROR "tmux: failed to start worker $worker"; qtmux kill-window -t "=${sess}:=${worker}" 2>/dev/null; return 1; }
 }
 
-# Inject text into a worker window, then press Enter as a separate keystroke
-# (many TUIs need the newline delivered on its own to submit).
-quintet_window_send() {
+# Type text literally into a worker window (no Enter).
+quintet_window_type() {
     local team="$1" worker="$2" text="$3" sess; sess=$(quintet_tmux_session "$team")
-    qtmux send-keys -t "=${sess}:=${worker}" -l "$text" || return 1
-    sleep 0.4
-    qtmux send-keys -t "=${sess}:=${worker}" Enter
+    qtmux send-keys -t "=${sess}:=${worker}" -l "$text"
+}
+
+# quintet_window_state <team> <worker> — print "<pane_dead> <pane_in_mode>"
+# ("0 0" = live and not in copy-mode); 1 if there is no such window.
+quintet_window_state() {
+    local team="$1" worker="$2" sess; sess=$(quintet_tmux_session "$team")
+    qtmux display-message -p -t "=${sess}:=${worker}" '#{pane_dead} #{pane_in_mode}' 2>/dev/null
+}
+
+# quintet_window_input_line <team> <worker> — the input box, joined: claude and
+# codex keep the cursor in it. From the cursor's row, rows are taken upward
+# through the first one that starts with a prompt marker (❯ › >), stopping
+# early at a blank row or a ──── rule (the cursor's own row may be blank: an
+# Enter can land as a newline), at most 8 rows. So wrapped input is included
+# and the transcript above, which echoes sent text, is not.
+quintet_window_input_line() {
+    local team="$1" worker="$2" sess y i r out="" n; sess=$(quintet_tmux_session "$team")
+    local -a rows
+    y="$(qtmux display-message -p -t "=${sess}:=${worker}" '#{cursor_y}' 2>/dev/null)" || return 1
+    [[ "$y" =~ ^[0-9]+$ ]] || return 1
+    mapfile -t rows < <(qtmux capture-pane -p -t "=${sess}:=${worker}" -S "$(( y > 7 ? y - 7 : 0 ))" -E "$y" 2>/dev/null)
+    n=${#rows[@]}
+    for (( i = n - 1; i >= 0; i-- )); do
+        r="${rows[i]}"
+        if (( i < n - 1 )); then
+            [[ "$r" =~ ^[[:space:]]*$ || "$r" =~ ^[[:space:]]*(─)+[[:space:]]*$ ]] && break
+        fi
+        out="${r}${out}"
+        [[ "$r" =~ ^[[:space:]]*(❯|›|>) ]] && break
+    done
+    printf '%s' "$out"
 }
 
 # Press one named key (e.g. Down, Enter) in a worker window.

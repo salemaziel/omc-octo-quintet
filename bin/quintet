@@ -38,7 +38,7 @@ TEAM MODE (persistent tmux worker teams):
   quintet team status   <name>
   quintet team doctor   <name>      # modal stalls + manifest/window check
   quintet team capture  <name> [worker] [lines]
-  quintet team send      <name> <worker> "<text>" [--force]  # worker = exact name, e.g. w1-claude
+  quintet team send      <name> <worker> "<text>" [--force] [--busy-ok]  # worker = exact name, e.g. w1-claude
   quintet team resume    <name> [worker]   # send kickoff tasks held on a dialog (all if no worker)
   quintet team shutdown  <name> [--force]
   quintet team list
@@ -51,6 +51,9 @@ TEAM MODE (persistent tmux worker teams):
                "trust this folder") is HELD: its task is saved, not typed; answer
                the dialog, then run: quintet team resume <name> <worker>
   --force      (send) type even though the worker shows a dialog
+  --busy-ok    (send) type even while the worker is mid-turn (the CLI may queue it)
+  (inbox)      the kickoff task, and any send over 300 bytes or with a newline, goes to
+               <cwd>/.quintet/inbox/<team>/ (0600, git-excluded); the worker gets a one-line nudge
   --model/--effort  a bare value (applies to every worker) or provider=value[,provider=value]
                e.g.  --model codex=gpt-6.1-sol,claude=opus
   --no-mcp     disable MCP where the provider supports it (WARN when only partial)

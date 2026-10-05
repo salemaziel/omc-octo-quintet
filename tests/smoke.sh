@@ -15,6 +15,8 @@ export QUINTET_TMUX_SOCKET="quintet-test-$$"
 unset TMUX
 ttmux() { tmux -L "$QUINTET_TMUX_SOCKET" "$@"; }
 trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET"' EXIT
+# Team workers' cwd: kickoff writes inbox files under <cwd>/.quintet, so never /tmp.
+QCWD="$(mktemp -d)"
 ok()   { echo "  ✅ $1"; PASS=$((PASS+1)); }
 bad()  { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 
@@ -97,12 +99,12 @@ if ! command -v tmux >/dev/null 2>&1; then
 else
     # Pre-flight auth checks (state in a sandbox, never the repo's ./.quintet)
     export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
-    auth_err=$("$BIN" team 1:qwen "fail task" --name "smoke-auth-fail-$$" --cwd /tmp 2>&1 || true)
+    auth_err=$("$BIN" team 1:qwen "fail task" --name "smoke-auth-fail-$$" --cwd "$QCWD" 2>&1 || true)
     echo "$auth_err" | grep -q "not ready/authenticated" && ok "pre-flight auth rejects unready provider" || bad "pre-flight auth rejects unready provider"
     ttmux has-session -t "quintet-smoke-auth-fail-$$" 2>/dev/null && bad "pre-flight session created on failure" || ok "no session created on auth failure"
 
     export QUINTET_QWEN_LAUNCH='bash --norc' QUINTET_QWEN_WARMUP=1
-    "$BIN" team 1:qwen "skip auth" --name "smoke-auth-skip-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 || true
+    "$BIN" team 1:qwen "skip auth" --name "smoke-auth-skip-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1 || true
     ttmux has-session -t "quintet-smoke-auth-skip-$$" 2>/dev/null && ok "--skip-auth-check permits start" || bad "--skip-auth-check permits start"
     "$BIN" team shutdown "smoke-auth-skip-$$" --force >/dev/null 2>&1 || true
     unset QUINTET_QWEN_LAUNCH QUINTET_QWEN_WARMUP
@@ -111,7 +113,7 @@ else
     QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"
-    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp --no-mcp --safe >/dev/null 2>&1 && ok "team start" || bad "team start"
+    "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd "$QCWD" --no-mcp --safe >/dev/null 2>&1 && ok "team start" || bad "team start"
     sleep 3
     "$BIN" team status "$T" >/dev/null 2>&1 && ok "team status" || bad "team status"
     marker="/tmp/quintet-smoke-$$.txt"; rm -f "$marker"
@@ -175,10 +177,10 @@ export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
 no_sessions() { ! ttmux list-sessions -F '#{session_name}' 2>/dev/null | grep -q -- "$1"; }
 
 # M7 / C6: a bad later token must abort the whole team (no partial start).
-out=$("$BIN" team 1:claude,1:codex:a:b:c "t" --name "smoke-spec5-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$("$BIN" team 1:claude,1:codex:a:b:c "t" --name "smoke-spec5-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "too many fields" && ok "team spec with 5 fields dies" || bad "team spec with 5 fields dies"
 no_sessions "smoke-spec5-$$" && ok "no session after 5-field spec" || bad "no session after 5-field spec"
-out=$("$BIN" team 1:claude,1:bogus "t" --name "smoke-bogus-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$("$BIN" team 1:claude,1:bogus "t" --name "smoke-bogus-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "unsupported provider" && ok "team spec with bogus provider dies" || bad "team spec with bogus provider dies"
 no_sessions "smoke-bogus-$$" && ok "no session after bogus-provider spec" || bad "no session after bogus-provider spec"
 ( _quintet_parse_spec "1:codex:stock:model:extra" ) >/dev/null 2>&1 && bad "parser rejects 5 fields" || ok "parser rejects 5 fields"
@@ -194,7 +196,7 @@ for sub in status doctor capture send; do
 done
 long_name="$(printf 'a%.0s' {1..65})"
 for bad_name in "a.b" "a:b" "$long_name" "-lead"; do
-    out=$("$BIN" team 1:claude "t" --name "$bad_name" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+    out=$("$BIN" team 1:claude "t" --name "$bad_name" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
     [[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid team name" && ok "--name '${bad_name:0:12}' rejected" || bad "--name '${bad_name:0:12}' rejected"
 done
 no_sessions "quintet-a" && ok "no session for rejected names" || bad "no session for rejected names"
@@ -256,12 +258,12 @@ export QUINTET_STATE_DIR="$W/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_
 
 # A2: exact session/window targets (no tmux prefix matching).
 P1="pfx-$$"; P2="pfx-$$-bar"
-"$BIN" team 1:claude:implementer "t" --name "$P2" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+"$BIN" team 1:claude:implementer "t" --name "$P2" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 ttmux has-session -t "=quintet-$P2" 2>/dev/null && ok "team $P2 started" || bad "team $P2 started"
 "$BIN" team status "$P1" >/dev/null 2>&1 && bad "status of prefix name is not running" || ok "status of prefix name is not running"
 "$BIN" team send "$P2" "w1-claude" "echo x" >/dev/null 2>&1 && bad "send to worker prefix rejected" || ok "send to worker prefix rejected"
 [[ -z "$("$BIN" team capture "$P2" "w1-claude" 2>/dev/null)" ]] && ok "capture of worker prefix is empty" || bad "capture of worker prefix is empty"
-"$BIN" team 1:claude "t" --name "$P1" --skip-auth-check --cwd /tmp >/dev/null 2>&1 && ok "prefix-named team starts alongside" || bad "prefix-named team starts alongside"
+"$BIN" team 1:claude "t" --name "$P1" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1 && ok "prefix-named team starts alongside" || bad "prefix-named team starts alongside"
 "$BIN" team shutdown "$P1" --force >/dev/null 2>&1
 ttmux has-session -t "=quintet-$P2" 2>/dev/null && ok "shutdown $P1 leaves quintet-$P2" || bad "shutdown $P1 leaves quintet-$P2"
 ttmux has-session -t "=quintet-$P1" 2>/dev/null && bad "shutdown $P1 kills quintet-$P1" || ok "shutdown $P1 kills quintet-$P1"
@@ -277,7 +279,7 @@ probe="qprobe-$$-val"; emarker="$W/env-marker.txt"
 (
     export QUINTET_TMUX_SOCKET="$ESOCK" HOME="$W/home" QUINTET_HOME="$W/home/.quintet" TMPDIR="$W/tmp"
     export QUINTET_TEST_PROBE="$probe" NOT_ALLOWED_PROBE="$probe"
-    "$BIN" team 1:claude "t" --name "envt-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    "$BIN" team 1:claude "t" --name "envt-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
     "$BIN" team send "envt-$$" "w1-claude" \
         "echo \"probe=\${QUINTET_TEST_PROBE:+set} other=\${NOT_ALLOWED_PROBE:+set} home=\$([ \"\$HOME\" = \"$W/home\" ] && echo fake)\" > $emarker" >/dev/null 2>&1
 )
@@ -346,7 +348,7 @@ r=$(QUINTET_CODEX_EFFORT=env quintet_resolve_effort codex "codex=high" ""); [[ "
 team_x() { ( export PATH="$X/bin:$PATH" HOME="$X/home" QUINTET_HOME="$X/home/.quintet" QUINTET_STATE_DIR="$X/state" \
     QUINTET_TEST_STUBLOG="$X/log" QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1; "$@" ); }
 mj() { cat "$X/state/teams/$1/team.json" 2>/dev/null; }
-team_x "$BIN" team 1:claude "t" --name "inj-$$" --skip-auth-check --cwd /tmp --safe --model "ok; touch $X/INJECTED" >/dev/null 2>&1; rc=$?
+team_x "$BIN" team 1:claude "t" --name "inj-$$" --skip-auth-check --cwd "$QCWD" --safe --model "ok; touch $X/INJECTED" >/dev/null 2>&1; rc=$?
 sleep 1
 [[ ! -e "$X/INJECTED" ]] && ok "model 'ok; touch …' not executed (C1)" || bad "model 'ok; touch …' not executed (C1)"
 # Since S-L4 such a value is rejected up front; argv escaping of odd values is
@@ -354,14 +356,14 @@ sleep 1
 [[ $rc -eq 1 ]] && ! ttmux has-session -t "=quintet-inj-$$" 2>/dev/null && ok "team rejects model 'ok; touch …' before launch (S-L4)" || bad "team rejects model 'ok; touch …' before launch (S-L4)"
 team_x "$BIN" team shutdown "inj-$$" >/dev/null 2>&1
 rm -f "$X/log/"*.argv
-team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex:stock:spec "t" --name "spec-$$" --skip-auth-check --cwd /tmp --effort codex=high --no-mcp >/dev/null 2>&1
+team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex:stock:spec "t" --name "spec-$$" --skip-auth-check --cwd "$QCWD" --effort codex=high --no-mcp >/dev/null 2>&1
 sleep 1
 argv_has codex --model spec && ok "spec model launched over QUINTET_CODEX_MODEL (C7)" || bad "spec model launched over QUINTET_CODEX_MODEL (C7)"
 mj "spec-$$" | grep -q '"model": "spec"' && ok "manifest records spec model (C7)" || bad "manifest records spec model (C7)"
 mj "spec-$$" | grep -q '"effort": "high"' && ok "manifest records effort (A14)" || bad "manifest records effort (A14)"
 mj "spec-$$" | grep -q '"no_mcp_effective": "full"' && ok "manifest records no_mcp_effective (A8)" || bad "manifest records no_mcp_effective (A8)"
 team_x "$BIN" team shutdown "spec-$$" >/dev/null 2>&1
-team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex "t" --name "envm-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+team_x env QUINTET_CODEX_MODEL=env "$BIN" team 1:codex "t" --name "envm-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 mj "envm-$$" | grep -q '"model": "env"' && ok "env-only model recorded, not default (C7)" || bad "env-only model recorded, not default (C7)"
 team_x "$BIN" team shutdown "envm-$$" >/dev/null 2>&1
 
@@ -414,12 +416,12 @@ rm -rf "$P/state/teams/notmux-$$"
 
 # Live team is never deleted, even with old state and --days 0.
 ( export QUINTET_STATE_DIR="$P/state" HOME="$P/home" QUINTET_HOME="$P/home" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
-  "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 )
+  "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1 )
 touch -d '10 days ago' "$P/state/teams/live-$$"/* "$P/state/teams/live-$$"
 pr --days 0 >/dev/null 2>&1
 [[ -d "$P/state/teams/live-$$" ]] && ok "live team state never deleted" || bad "live team state never deleted"
 [[ ! -e "$P/state/locks/live-$$.lock" ]] && ok "team start released its lock" || bad "team start released its lock"
-out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd "$QCWD" 2>&1 ); rc=$?
 [[ $rc -eq 1 && ! -e "$P/state/locks/live-$$.lock" ]] && echo "$out" | grep -q "already running" && ok "die path in team start releases lock" || bad "die path in team start releases lock"
 QUINTET_STATE_DIR="$P/state" "$BIN" team shutdown "live-$$" >/dev/null 2>&1
 
@@ -428,7 +430,7 @@ sleep 60 & live_pid=$!
 mk_old "$P/state/teams/lk-$$"; mkdir -p "$P/state/locks/lk-$$.lock"; echo "$live_pid" > "$P/state/locks/lk-$$.lock/pid"
 out=$(pr --days 1 2>&1)
 [[ -d "$P/state/teams/lk-$$" ]] && echo "$out" | grep -q "skipping 'lk-$$' (locked" && ok "prune skips team locked by a live pid (C2)" || bad "prune skips team locked by a live pid (C2)"
-out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home" QUINTET_CLAUDE_LAUNCH='bash --norc'; "$BIN" team 1:claude "t" --name "lk-$$" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home" QUINTET_CLAUDE_LAUNCH='bash --norc'; "$BIN" team 1:claude "t" --name "lk-$$" --skip-auth-check --cwd "$QCWD" 2>&1 ); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "is locked" && ! ttmux has-session -t "=quintet-lk-$$" 2>/dev/null && ok "team start refuses a locked team (C2)" || bad "team start refuses a locked team (C2)"
 kill "$live_pid" 2>/dev/null; wait "$live_pid" 2>/dev/null
 ( exit 0 ) & dead_pid=$!; wait "$dead_pid"
@@ -475,7 +477,7 @@ mk_old "$P/state/teams/a.b"; mk_old "$P/home/teams/hometeam"
 out=$(pr --days 1 2>&1)
 [[ -d "$P/state/teams/a.b" ]] && echo "$out" | grep -q "skipping 'a.b' (not a valid team name).*rm -rf --" && ok "invalid team dir name skipped with cleanup hint" || bad "invalid team dir name skipped with cleanup hint"
 [[ -d "$P/home/teams/hometeam" ]] && echo "$out" | grep -q "skipping $P/home/teams" && ok "QUINTET_HOME/teams skipped with WARN" || bad "QUINTET_HOME/teams skipped with WARN"
-out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "fleet-1-2-3" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "fleet-1-2-3" --skip-auth-check --cwd "$QCWD" 2>&1 ); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "reserved for fleet" && ok "team name in fleet namespace rejected" || bad "team name in fleet namespace rejected"
 
 # M3 (plan 4.7): orphaned fleet sessions older than 60 min (owner pid dead) are swept (test socket only).
@@ -627,7 +629,7 @@ echo "$ferr" | grep -q "fleet session kept: tmux attach -t $ksess.*kill-session"
 # Plan 5.3 applied to team windows: a CLI that exits at once keeps its pane.
 ( export PATH="$F/bin:/usr/bin:/bin" HOME="$F/home" QUINTET_HOME="$F/home/.quintet" QUINTET_STATE_DIR="$F/state" TMPDIR="$F/tmp"
   export QUINTET_CLAUDE_LAUNCH='echo fast-exit-marker; exit 3' QUINTET_CLAUDE_WARMUP=0
-  "$BIN" team 1:claude "t" --name "fastx-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 )
+  "$BIN" team 1:claude "t" --name "fastx-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1 )
 [[ "$(ttmux list-panes -t "=quintet-fastx-$$:=w1-claude" -F '#{pane_dead}' 2>/dev/null)" == 1 ]] \
     && ttmux capture-pane -p -S - -t "=quintet-fastx-$$:=w1-claude" 2>/dev/null | grep -q fast-exit-marker \
     && ok "fast-exiting team worker keeps its pane and output" || bad "fast-exiting team worker keeps its pane and output"
@@ -649,7 +651,7 @@ zz env QUINTET_CLAUDE_LAUNCH='printf "Implemented API key validation\n"; sleep 6
        QUINTET_CODEX_LAUNCH='printf "Do you trust this folder? [y/N]\n"; for i in $(seq 25); do echo; done; sleep 600' \
        QUINTET_AGY_LAUNCH='printf "Please log in to continue\n"; sleep 600' \
        QUINTET_QWEN_LAUNCH='printf "Enter your API key: \n"; sleep 600' \
-    "$BIN" team 1:claude,1:codex,1:agy,1:qwen "diag" --name "$mt" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    "$BIN" team 1:claude,1:codex,1:agy,1:qwen "diag" --name "$mt" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 sleep 3
 dout=$(zz "$BIN" team doctor "$mt" 2>&1); drc=$?
 echo "$dout" | grep -q "Worker 'w1-claude': no recognized modal" && ! echo "$dout" | grep -q "w1-claude' is STALLED" && ok "log line 'Implemented API key validation' is not AUTH_REQUIRED (C8)" || bad "log line 'Implemented API key validation' is not AUTH_REQUIRED (C8)"
@@ -697,15 +699,15 @@ rm -f "$ah/.gemini/antigravity-cli/antigravity-oauth-token"
 dout=$(PATH="$Z/mac:$PATH" HOME="$ah" "$BIN" doctor 2>/dev/null)
 echo "$dout" | grep -E '^.{1,4} claude ' | grep -q "unverified" && ok "doctor shows unknown auth as 'unverified' (A9)" || bad "doctor shows unknown auth as 'unverified' (A9)"
 printf '#!/bin/sh\nexit 0\n' > "$Z/stub/claude"; chmod +x "$Z/stub/claude"
-out=$(env -u QUINTET_CLAUDE_LAUNCH -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" "$BIN" team 1:claude "t" --name "pf-$$" --cwd /tmp 2>&1); rc=$?
+out=$(env -u QUINTET_CLAUDE_LAUNCH -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" "$BIN" team 1:claude "t" --name "pf-$$" --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 ]] && echo "$out" | grep -q "not ready/authenticated" && ok "pre-flight rejects claude with no credentials (A9)" || bad "pre-flight rejects claude with no credentials (A9)"
 printf '#!/bin/sh\nexit 0\n' > "$Z/stub/agy"; chmod +x "$Z/stub/agy"
-PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" QUINTET_GEMINI_LAUNCH='bash --norc' QUINTET_AGY_WARMUP=1 "$BIN" team 1:agy "t" --name "gl-$$" --cwd /tmp >/dev/null 2>&1
+PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" QUINTET_GEMINI_LAUNCH='bash --norc' QUINTET_AGY_WARMUP=1 "$BIN" team 1:agy "t" --name "gl-$$" --cwd "$QCWD" >/dev/null 2>&1
 ttmux has-session -t "=quintet-gl-$$" 2>/dev/null && ok "pre-flight honors QUINTET_GEMINI_LAUNCH (A9)" || bad "pre-flight honors QUINTET_GEMINI_LAUNCH (A9)"
 QUINTET_STATE_DIR="$Z/state" "$BIN" team shutdown "gl-$$" --force >/dev/null 2>&1
 
 # A14: a worker that fails to spawn keeps its index; later workers keep their numbers and subtasks.
-sout=$(PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_WIN=w1-claude zz env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 2:claude "shared goal" --name "sf-$$" --skip-auth-check --cwd /tmp --tasks "subtask-one||subtask-two" 2>&1)
+sout=$(PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_WIN=w1-claude zz env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 2:claude "shared goal" --name "sf-$$" --skip-auth-check --cwd "$QCWD" --tasks "subtask-one||subtask-two" 2>&1)
 sm="$Z/state/teams/sf-$$"
 [[ "$(jq -r '.workers[].name' "$sm/team.json" 2>/dev/null)" == "w2-claude" ]] && ok "spawn failure on worker 1: survivor is named w2-claude (A14)" || bad "spawn failure on worker 1: survivor is named w2-claude (A14)"
 grep -q 'w2-claude.*subtask-two' "$sm/taskboard.md" && ! grep -q 'subtask-one' "$sm/taskboard.md" && ok "survivor gets subtask 2, not subtask 1 (A14)" || bad "survivor gets subtask 2, not subtask 1 (A14)"
@@ -769,12 +771,12 @@ mkdir -p "$S/h1/b/x" "$S/h1/a"
 # S-M2: team start never writes through pre-placed state-file symlinks or a symlinked team dir.
 mkdir -p "$S/m2/state/teams/smt-$$"; echo original > "$S/m2/victim-board"; echo original > "$S/m2/victim-json"
 ln -s "$S/m2/victim-board" "$S/m2/state/teams/smt-$$/taskboard.md"; ln -s "$S/m2/victim-json" "$S/m2/state/teams/smt-$$/team.json"
-sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "smt-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "smt-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 [[ "$(cat "$S/m2/victim-board")" == original && "$(cat "$S/m2/victim-json")" == original ]] && ok "team start does not write through taskboard.md/team.json symlinks (S-M2)" || bad "team start does not write through taskboard.md/team.json symlinks (S-M2)"
 [[ ! -L "$S/m2/state/teams/smt-$$/taskboard.md" && ! -L "$S/m2/state/teams/smt-$$/team.json" ]] && grep -q "quintet team: smt-$$" "$S/m2/state/teams/smt-$$/taskboard.md" && ok "state files replaced by real files (S-M2)" || bad "state files replaced by real files (S-M2)"
 sx env QUINTET_STATE_DIR="$S/m2/state" "$BIN" team shutdown "smt-$$" --force >/dev/null 2>&1
 mkdir -p "$S/m2/dtarget"; ln -s "$S/m2/dtarget" "$S/m2/state/teams/smd-$$"
-out=$(sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "smd-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(sx env QUINTET_STATE_DIR="$S/m2/state" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "smd-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 && -z "$(ls -A "$S/m2/dtarget")" ]] && echo "$out" | grep -q "symlink" && ! ttmux has-session -t "=quintet-smd-$$" 2>/dev/null && ok "team start refuses a symlinked team dir (S-M2)" || bad "team start refuses a symlinked team dir (S-M2)"
 ttmux kill-session -t "=quintet-smd-$$" 2>/dev/null
 
@@ -783,7 +785,7 @@ ttmux kill-session -t "=quintet-smd-$$" 2>/dev/null
 probe2="qprobe2-$$-val"; lmark="$S/leak-marker.txt"
 ( export NOT_ALLOWED_PROBE="$probe2" HOME="$S/srvhome"; tmux -L "$LSOCK" new-session -d -s keepalive -c "$S" sleep 3600 )
 sx env -u NOT_ALLOWED_PROBE QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/m1state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 \
-    LC_PAPER=C "$BIN" team 1:claude "t" --name "leak-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    LC_PAPER=C "$BIN" team 1:claude "t" --name "leak-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 QUINTET_TMUX_SOCKET="$LSOCK" "$BIN" team send "leak-$$" "w1-claude" \
     "echo \"other=\${NOT_ALLOWED_PROBE:+set} lc=\${LC_PAPER:+set} term=\${TERM:+set}\" > $lmark" >/dev/null 2>&1
 sleep 1.5
@@ -808,7 +810,7 @@ lk_try b && [[ "$(cat "$LK/locks/b.lock/pid")" == "$$" ]] && ok "empty pid-less 
 [[ -z "$(find "$LK/locks" -name '*.tmp.*' 2>/dev/null)" ]] && ok "no lock temp dirs left behind (S-L1)" || bad "no lock temp dirs left behind (S-L1)"
 sleep 60 & lklive=$!
 mkdir -p "$LK/locks/d.lock" "$LK/teams/d"; echo "$lklive" > "$LK/locks/d.lock/pid"; echo '{}' > "$LK/teams/d/team.json"
-out=$(sx env QUINTET_STATE_DIR="$LK" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name d --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(sx env QUINTET_STATE_DIR="$LK" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name d --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -qF "rm -rf -- $LK/locks/d.lock" && ok "'locked' error prints the manual cleanup path (S-L1)" || bad "'locked' error prints the manual cleanup path (S-L1)"
 out=$(sx env QUINTET_STATE_DIR="$LK" "$BIN" prune --days 0 2>&1)
 [[ -d "$LK/teams/d" ]] && echo "$out" | grep -qF "rm -rf -- $LK/locks/d.lock" && ok "prune 'locked' WARN prints the manual cleanup path (S-L1)" || bad "prune 'locked' WARN prints the manual cleanup path (S-L1)"
@@ -821,7 +823,7 @@ for f in /usr/bin/* /bin/*; do
     [[ -e "$NR/${f##*/}" ]] || ln -s "$f" "$NR/${f##*/}"
 done
 printf '#!/bin/sh\necho "mv: invalid option -- T" >&2\nexit 1\n' > "$NR/mv"; chmod +x "$NR/mv"
-out=$(sx env PATH="$S/bin:$NR" QUINTET_STATE_DIR="$S/nrstate" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "nr-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(sx env PATH="$S/bin:$NR" QUINTET_STATE_DIR="$S/nrstate" QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "nr-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "needs GNU mv or python3 for locks" && ! echo "$out" | grep -q "is locked" && ! ttmux has-session -t "=quintet-nr-$$" 2>/dev/null && ok "team start without GNU mv or python3: clear lock error (R-L3)" || bad "team start without GNU mv or python3: clear lock error (R-L3)"
 mkdir -p "$S/nrstate/teams/nrp-$$"
 out=$(sx env PATH="$S/bin:$NR" QUINTET_STATE_DIR="$S/nrstate" "$BIN" prune --days 0 2>&1); rc=$?
@@ -848,7 +850,7 @@ $rl4ok && ok "30 concurrent breakers of a stale .break: exactly one holds the lo
 [[ -z "$(find "$LK/locks" -name '*.dead.*' 2>/dev/null)" ]] && ok "no *.dead.* lock dirs left behind (R-L4)" || bad "no *.dead.* lock dirs left behind (R-L4)"
 
 # S-L3: a team on another tmux socket is checked there. Socket B = $LSOCK.
-out=$(sx env QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/xsstate" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "xs-$$" --skip-auth-check --cwd /tmp 2>&1)
+out=$(sx env QUINTET_TMUX_SOCKET="$LSOCK" QUINTET_STATE_DIR="$S/xsstate" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "xs-$$" --skip-auth-check --cwd "$QCWD" 2>&1)
 [[ "$(jq -r .tmux_socket "$S/xsstate/teams/xs-$$/team.json" 2>/dev/null)" == "$LSOCK" ]] && ok "team start records tmux_socket in team.json (S-L3)" || bad "team start records tmux_socket in team.json (S-L3)"
 mkdir -p "$S/xsstate/teams/xn-$$" "$S/xsstate/teams/xd-$$" "$S/xsstate/teams/xi-$$"
 printf '{"tmux_socket": "%s"}\n' "$LSOCK" > "$S/xsstate/teams/xn-$$/team.json"
@@ -880,7 +882,7 @@ kill "$fown" 2>/dev/null; wait "$fown" 2>/dev/null
 # legitimate names keep working.
 out=$(sx env QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet --no-tmux "hi" codex --model "--dangerously-skip-permissions" 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid value" && ! echo "$out" | grep -q "must-not-run" && ok "fleet --model '--dangerously-…' rejected (S-L4)" || bad "fleet --model '--dangerously-…' rejected (S-L4)"
-out=$(sx env QUINTET_STATE_DIR="$S/l4state" QUINTET_CODEX_LAUNCH='bash --norc' "$BIN" team 1:codex "t" --name "l4-$$" --skip-auth-check --cwd /tmp --effort codex=-x 2>&1); rc=$?
+out=$(sx env QUINTET_STATE_DIR="$S/l4state" QUINTET_CODEX_LAUNCH='bash --norc' "$BIN" team 1:codex "t" --name "l4-$$" --skip-auth-check --cwd "$QCWD" --effort codex=-x 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "invalid value" && ! ttmux has-session -t "=quintet-l4-$$" 2>/dev/null && ok "team --effort codex=-x rejected (S-L4)" || bad "team --effort codex=-x rejected (S-L4)"
 ttmux kill-session -t "=quintet-l4-$$" 2>/dev/null
 ( _quintet_parse_spec "1:codex:stock:-x" ) >/dev/null 2>&1 && bad "spec model '-x' rejected (S-L4)" || ok "spec model '-x' rejected (S-L4)"
@@ -903,7 +905,7 @@ cx() { ( export PATH="$C/bin:/usr/bin:/bin" HOME="$C/home" QUINTET_HOME="$C/home
     unset QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD QUINTET_MODEL QUINTET_EFFORT QUINTET_MODEL_CLI QUINTET_MODEL_MAP; "$@" ); }
 
 # C-M1: a worker whose CLI exited is reported, and doctor counts it.
-cx env QUINTET_CLAUDE_LAUNCH='echo exiting-now; exit 3' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "ex-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+cx env QUINTET_CLAUDE_LAUNCH='echo exiting-now; exit 3' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "ex-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 sleep 1
 sout=$(cx "$BIN" team status "ex-$$" 2>&1); src=$?
 [[ $src -eq 1 ]] && ok "team status returns 1 with an exited worker (A2)" || bad "team status returns 1 with an exited worker (A2) (rc $src)"
@@ -920,7 +922,7 @@ echo "$out" | grep -q "dropping duplicate provider entry '1:codex:reviewer'" && 
 [[ "$(echo "$out" | grep -c "codex   \[0:ok\]")" -eq 1 ]] && ! echo "$out" | grep -q "fallback for codex" && ! echo "$out" | grep -q "cannot create tmux window" && ok "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)" || bad "tmux fleet with a duplicated provider runs one healthy worker, no fallback (C-M2)"
 
 # C-M3: zero started workers -> nonzero, no session, no team dir, no lock.
-out=$(cx env PATH="$C/stub:$C/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "zero-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(cx env PATH="$C/stub:$C/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "zero-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 ]] && echo "$out" | grep -q "none of the 1 worker(s) started" && ok "team start with zero started workers exits nonzero (C-M3)" || bad "team start with zero started workers exits nonzero (C-M3)"
 ! ttmux has-session -t "=quintet-zero-$$" 2>/dev/null && [[ ! -e "$C/state/teams/zero-$$" && ! -e "$C/state/locks/zero-$$.lock" ]] && ok "zero-worker start leaves no session, team dir or lock (C-M3)" || bad "zero-worker start leaves no session, team dir or lock (C-M3)"
 ttmux kill-session -t "=quintet-zero-$$" 2>/dev/null
@@ -970,7 +972,7 @@ nx() { ( export PATH="$N/bin:/usr/bin:/bin" HOME="$N/home" QUINTET_HOME="$N/home
 for tcase in kitty unset; do
     if [[ "$tcase" == kitty ]]; then tset=(env TERM=xterm-kitty); else tset=(env -u TERM); fi
     tm="$N/term-$tcase.txt"
-    nx "${tset[@]}" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "term-$tcase-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    nx "${tset[@]}" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=0 "$BIN" team 1:claude "t" --name "term-$tcase-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
     dterm="$(ttmux show -gv default-terminal 2>/dev/null)"
     nx "$BIN" team send "term-$tcase-$$" "w1-claude" "echo \"term=\$TERM pane=\${TMUX_PANE:+set} tmux=\${TMUX:+set}\" > $tm" >/dev/null 2>&1
     sleep 1.5
@@ -1018,7 +1020,7 @@ echo "$fo" | grep -q "nt other= foreign= quintet=set" && ok "--no-tmux fleet wor
 # S-L4 / R-L1: env-sourced model/effort values are validated before any launch.
 out=$(nx env QUINTET_CODEX_MODEL=--x QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet --no-tmux "hi" codex 2>&1); rc=$?
 [[ $rc -ne 0 ]] && echo "$out" | grep -q "QUINTET_CODEX_MODEL: invalid value" && ! echo "$out" | grep -q "must-not-run" && ok "QUINTET_CODEX_MODEL=--x rejected before launch (R-L1)" || bad "QUINTET_CODEX_MODEL=--x rejected before launch (R-L1)"
-out=$(nx env QUINTET_EFFORT=-x QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "envx-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(nx env QUINTET_EFFORT=-x QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "envx-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 ]] && echo "$out" | grep -q "QUINTET_EFFORT: invalid value" && ! ttmux has-session -t "=quintet-envx-$$" 2>/dev/null && [[ ! -e "$N/state/teams/envx-$$" ]] && ok "QUINTET_EFFORT=-x rejected before team launch (R-L1)" || bad "QUINTET_EFFORT=-x rejected before team launch (R-L1)"
 ttmux kill-session -t "=quintet-envx-$$" 2>/dev/null
 out=$(nx env QUINTET_MODEL_MAP=codex=-y QUINTET_CODEX_ONESHOT_CMD='echo must-not-run' "$BIN" fleet "hi" codex 2>&1); rc=$?
@@ -1039,11 +1041,11 @@ ea=(); [[ -f "$N/esc.argv" ]] && mapfile -d '' ea < "$N/esc.argv"
 # R-L2: a zero-worker start keeps a pre-existing team dir and its files; only what
 # this start wrote is removed (the prior taskboard.md is restored).
 KD="$N/state/teams/kept-$$"; mkdir -p "$KD"; echo keep > "$KD/notes.md"; echo prior-board > "$KD/taskboard.md"
-out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 && "$(cat "$KD/notes.md" 2>/dev/null)" == keep && "$(cat "$KD/taskboard.md" 2>/dev/null)" == prior-board && ! -e "$KD/team.json" && -z "$(find "$KD" -name '.taskboard*' 2>/dev/null)" ]] \
     && ok "zero-worker start keeps prior notes.md and taskboard.md (R-L2)" || bad "zero-worker start keeps prior notes.md and taskboard.md (R-L2)"
 rm -f "$KD/taskboard.md"
-nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_WIN=w1-claude QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 [[ "$(cat "$KD/notes.md" 2>/dev/null)" == keep && ! -e "$KD/taskboard.md" && ! -e "$N/state/locks/kept-$$.lock" ]] && ! ttmux has-session -t "=quintet-kept-$$" 2>/dev/null \
     && ok "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)" || bad "zero-worker start removes only the taskboard.md it wrote, no session or lock (R-L2)"
 ttmux kill-session -t "=quintet-kept-$$" 2>/dev/null
@@ -1051,10 +1053,10 @@ ttmux kill-session -t "=quintet-kept-$$" 2>/dev/null
 # A2: a die after the taskboard backup (tmux session creation fails) puts the
 # prior taskboard back, drops the temp files and releases the lock.
 echo prior-board2 > "$KD/taskboard.md"
-out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "kept-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 && "$(cat "$KD/taskboard.md" 2>/dev/null)" == prior-board2 && "$(cat "$KD/notes.md" 2>/dev/null)" == keep && -z "$(find "$KD" -name '.taskboard*' 2>/dev/null)" && ! -e "$N/state/locks/kept-$$.lock" ]] \
     && ok "a die after the backup restores the prior taskboard and releases the lock (A2)" || bad "a die after the backup restores the prior taskboard and releases the lock (A2)"
-out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "fresh-$$" --skip-auth-check --cwd /tmp 2>&1); rc=$?
+out=$(nx env PATH="$N/stub:$N/bin:/usr/bin:/bin" QUINTET_TEST_FAIL_SESSION=1 QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "fresh-$$" --skip-auth-check --cwd "$QCWD" 2>&1); rc=$?
 [[ $rc -ne 0 && ! -e "$N/state/teams/fresh-$$" && ! -e "$N/state/locks/fresh-$$.lock" ]] \
     && ok "a die after the backup removes a team dir this start created (A2)" || bad "a die after the backup removes a team dir this start created (A2)"
 rm -rf "$N"
@@ -1099,7 +1101,7 @@ hf="$TR/state/teams/tr1-$$/held/w1-claude.txt"
 echo "$out" | grep -q "w1-claude HELD: TRUST_FOLDER" && echo "$out" | grep -qF "quintet team resume tr1-$$ w1-claude" && echo "$out" | grep -q "tmux attach -t quintet-tr1-$$" \
     && ok "trust dialog at kickoff: WARN names HELD, attach and resume (A1)" || bad "trust dialog at kickoff: WARN names HELD, attach and resume (A1)"
 [[ ! -s "$TR/k1.log" ]] && ok "held worker received no key, no Enter (A1)" || bad "held worker received no key, no Enter (A1) (got: $(tr '\n' ' ' < "$TR/k1.log"))"
-[[ -f "$hf" && "$(stat -c %a "$hf")" == 600 && "$(stat -c %a "${hf%/*}")" == 700 ]] && grep -q "trust task one" "$hf" && ok "held task saved 0600 in a 0700 dir (A1)" || bad "held task saved 0600 in a 0700 dir (A1)"
+[[ -f "$hf" && "$(stat -c %a "$hf")" == 600 && "$(stat -c %a "${hf%/*}")" == 700 ]] && grep -q "trust task one" "$(sed -n 's/^Read and follow \(.*\) now\.$/\1/p' "$hf")" && ok "held task saved 0600 in a 0700 dir (A1)" || bad "held task saved 0600 in a 0700 dir (A1)"
 grep -qF "[quintet] w1-claude HELD: TRUST_FOLDER" "$TR/state/teams/tr1-$$/taskboard.md" && ok "taskboard notes the held worker (A1)" || bad "taskboard notes the held worker (A1)"
 out=$(tx "$BIN" team status "tr1-$$" 2>&1)
 echo "$out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)" || bad "status: current trust dialog is STALLED_MODAL: TRUST_FOLDER (A1)"
@@ -1110,11 +1112,11 @@ out=$(tx "$BIN" team resume "tr1-$$" w1-claude 2>&1); rc=$?
 tx "$BIN" team resume "tr1-$$" ../x >/dev/null 2>&1 && bad "resume rejects worker '../x' (A1)" || ok "resume rejects worker '../x' (A1)"
 ttmux send-keys -t "=quintet-tr1-$$:=w1-claude" Down; sleep 0.5; ttmux send-keys -t "=quintet-tr1-$$:=w1-claude" Enter; sleep 1
 out=$(tx "$BIN" team resume "tr1-$$" 2>&1); rc=$?; sleep 1
-[[ $rc -eq 0 && ! -e "$hf" ]] && grep -q "^LINE:.*trust task one" "$TR/k1.log" && ok "resume (all held) sends the task once the dialog is answered (A1)" || bad "resume (all held) sends the task once the dialog is answered (A1)"
+[[ $rc -eq 0 && ! -e "$hf" ]] && grep -q "^LINE:Read and follow .*/w1-claude\.md now\." "$TR/k1.log" && ok "resume (all held) sends the task once the dialog is answered (A1)" || bad "resume (all held) sends the task once the dialog is answered (A1)"
 tx "$BIN" team shutdown "tr1-$$" --force >/dev/null 2>&1
 
 # Old wording is still detected; --force sends anyway.
-tx env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "tr4-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+tx env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 1:claude "t" --name "tr4-$$" --skip-auth-check --cwd "$QCWD" >/dev/null 2>&1
 tx "$BIN" team send "tr4-$$" w1-claude "printf 'Do you trust this folder? [y/N]: '" >/dev/null 2>&1; sleep 1
 out=$(tx "$BIN" team status "tr4-$$" 2>&1)
 echo "$out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "old 'Do you trust this folder?' wording still detected (A1)" || bad "old 'Do you trust this folder?' wording still detected (A1)"
@@ -1150,6 +1152,64 @@ out=$(hx "$BIN" team 1:claude "t" --name "hst-$$" --skip-auth-check --cwd "$H/s#
 [[ $rc -ne 0 ]] && echo "$out" | grep -qF "contains '#['" && ! tmux -L "$HSOCK" has-session -t "=quintet-hst-$$" 2>/dev/null && ok "team --cwd containing '#[' is refused before any session (A1b)" || bad "team --cwd containing '#[' is refused before any session (A1b)"
 tmux -L "$HSOCK" kill-server >/dev/null 2>&1
 rm -rf "$H"
+
+echo "── 2. typing into team workers ──"
+# A stand-in worker: logs each line it reads. swallow: the first Enter leaves the
+# text on the input line (as if not submitted). newline: the first Enter becomes a
+# newline in a wrapped input box (seen with real claude at startup). busy: shows a
+# running-turn footer.
+Q2="$(mktemp -d)"; mkdir -p "$Q2/repo" "$Q2/state"; git -C "$Q2/repo" init -q
+q2stub() {  # q2stub <mode> -> path of a stub script logging to $Q2/<mode>.log
+    local f="$Q2/stub-$1.sh"
+    cat > "$f" <<STUB
+#!/bin/bash
+n=0
+[ "$1" = busy ] && printf '• Working (2s • esc to interrupt)\n'
+printf '❯ '
+while IFS= read -r line; do
+  n=\$((n+1)); printf '%s\n' "\$line" >> "$Q2/$1.log"
+  if [ "$1" = swallow ] && [ \$n = 1 ]; then printf '❯ %s' "\$line"; continue; fi
+  if [ "$1" = newline ] && [ \$n = 1 ]; then printf '❯ %s\n  ' "\$(printf '%s' "\$line" | fold -w 30 | sed '2,\$s/^/  /')"; continue; fi
+  [ "$1" = busy ] && printf '• Working (2s • esc to interrupt)\n'
+  printf '❯ '
+done
+STUB
+    echo "$f"
+}
+q2() { ( export QUINTET_STATE_DIR="$Q2/state" QUINTET_CLAUDE_WARMUP=1 QUINTET_SUBMIT_CHECK_DELAY=0.5; "$@" ); }
+
+# 2.1: an Enter that didn't submit is pressed again, once; the text isn't retyped.
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub swallow)" "$BIN" team 1:claude "t" --name "sw-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+[[ "$(wc -l < "$Q2/swallow.log" 2>/dev/null)" == 2 && -z "$(sed -n 2p "$Q2/swallow.log")" ]] \
+    && ok "swallowed first Enter: exactly one more Enter, no retype (2.1)" || bad "swallowed first Enter: exactly one more Enter, no retype (2.1) (log: $(tr '\n' '|' < "$Q2/swallow.log" 2>/dev/null))"
+q2 "$BIN" team shutdown "sw-$$" --force >/dev/null 2>&1
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub newline)" "$BIN" team 1:claude "t" --name "nl-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+[[ "$(wc -l < "$Q2/newline.log" 2>/dev/null)" == 2 && -z "$(sed -n 2p "$Q2/newline.log")" ]] \
+    && ok "Enter landed as a newline in a wrapped input: one more Enter (2.1)" || bad "Enter landed as a newline in a wrapped input: one more Enter (2.1) (log: $(tr '\n' '|' < "$Q2/newline.log" 2>/dev/null))"
+q2 "$BIN" team shutdown "nl-$$" --force >/dev/null 2>&1
+
+# 2.2: the kickoff is one nudge line; the task is in a 0600 inbox file excluded from git.
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub plain)" "$BIN" team 1:claude "goal-22" --name "ib-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+ibf="$Q2/repo/.quintet/inbox/ib-$$/w1-claude.md"
+[[ "$(wc -l < "$Q2/plain.log" 2>/dev/null)" == 1 ]] && grep -qxF "Read and follow $ibf now." "$Q2/plain.log" \
+    && [[ "$(stat -c %a "$ibf" 2>/dev/null)" == 600 ]] && grep -q "goal-22" "$ibf" && grep -qxF '.quintet/' "$Q2/repo/.git/info/exclude" \
+    && ok "kickoff: one nudge line, task in a 0600 inbox file, .quintet/ excluded (2.2)" || bad "kickoff: one nudge line, task in a 0600 inbox file, .quintet/ excluded (2.2)"
+q2 "$BIN" team send "ib-$$" w1-claude $'line one\nline two' >/dev/null 2>&1; sleep 1
+sed -n 2p "$Q2/plain.log" 2>/dev/null | grep -qE "^Read and follow $Q2/repo/\.quintet/inbox/ib-$$/w1-claude-[0-9]+-[0-9]+\.md now\.$" \
+    && ok "multi-line team send goes through an inbox file (2.2)" || bad "multi-line team send goes through an inbox file (2.2)"
+q2 "$BIN" team shutdown "ib-$$" --force >/dev/null 2>&1
+
+# 2.3: send refuses a busy pane; --busy-ok types.
+q2 env QUINTET_CLAUDE_LAUNCH="bash --norc $(q2stub busy)" "$BIN" team 1:claude "t" --name "bz-$$" --skip-auth-check --cwd "$Q2/repo" >/dev/null 2>&1
+out=$(q2 "$BIN" team send "bz-$$" w1-claude "busy-marker-23a" 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "mid-turn" && ! grep -q "busy-marker-23a" "$Q2/busy.log" 2>/dev/null \
+    && ok "team send refuses a busy pane (2.3)" || bad "team send refuses a busy pane (2.3)"
+q2 "$BIN" team send "bz-$$" w1-claude "busy-marker-23b" --busy-ok >/dev/null 2>&1; sleep 1
+grep -qx "busy-marker-23b" "$Q2/busy.log" 2>/dev/null && ok "--busy-ok types into a busy pane (2.3)" || bad "--busy-ok types into a busy pane (2.3)"
+q2 "$BIN" team shutdown "bz-$$" --force >/dev/null 2>&1
+rm -rf "$Q2"
+
+rm -rf "$QCWD"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"

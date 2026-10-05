@@ -301,10 +301,20 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
         worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}"), \"effort\": $(json_escape "${effort:-default}"), \"no_mcp_effective\": $(json_escape "$mcp_eff")}"
 
+        # The full instruction goes to an inbox file; the worker is told to read
+        # it in one short line (multi-line text typed into a TUI can submit early).
+        local kick inbox
+        if inbox="$(_quintet_inbox_write "$cwd" "$name" "$worker_name" "$injected")"; then
+            kick="Read and follow ${inbox} now."
+        else
+            log WARN "${worker_name}: cannot write the inbox file under ${cwd}/.quintet/inbox; typing the task instead"
+            kick="$injected"
+        fi
+
         # Defer task injection: warm up the REPL first, then send only if no
         # first-run dialog is showing (Enter would answer it, e.g. "No, exit").
         ( sleep "$(quintet_provider_warmup "$provider")"
-          _quintet_team_kickoff "$name" "$worker_name" "$injected" ) &
+          _quintet_team_kickoff "$name" "$worker_name" "$kick" ) &
         idx=$((idx+1))
     done
 
@@ -391,6 +401,86 @@ _quintet_detect_worker_modal() {
     return 1
 }
 
+# _quintet_worker_busy <team> <worker> — true if the pane shows a running turn:
+# "esc to interrupt", or a spinner line with an elapsed counter, e.g. claude's
+# "* Baking… (3s · thinking)" or codex's "• Working (2s • esc to interrupt)".
+# The finished-turn lines ("✻ Brewed for 3s · done", "Worked for 21s • 2:44 PM")
+# have no "(<n>s" and don't match.
+_quintet_worker_busy() {
+    local buf
+    buf="$(quintet_window_capture "$1" "$2" 40 2>/dev/null)" || return 1
+    printf '%s\n' "$buf" | grep -v '^[[:space:]]*$' | tail -n 15 \
+        | grep -Eq 'esc to interrupt|^[[:space:]]*[^[:alnum:][:space:]]{1,4}[[:space:]]+[[:alpha:]][^()]*\([0-9]+[smh][^)]*[·•]'
+}
+
+# _quintet_inbox_write <cwd> <team> <file> <text> — write <text> to
+# <cwd>/.quintet/inbox/<team>/<file>.md (0600; new dirs 0700; temp + rename so a
+# planted symlink is replaced, not followed), add .quintet/ to the repo's
+# .git/info/exclude, and print the path. Returns 1 if it can't.
+_quintet_inbox_write() {
+    local cwd="${1%/}" team="$2" file="$3" text="$4" d p tmp ex
+    d="${cwd}/.quintet/inbox/${team}"
+    for p in "${cwd}/.quintet" "${cwd}/.quintet/inbox" "$d"; do
+        [[ -L "$p" ]] && { log ERROR "inbox: $p is a symlink; not writing there"; return 1; }
+        [[ -d "$p" ]] || mkdir -m 700 "$p" 2>/dev/null || return 1
+        [[ -O "$p" ]] || { log ERROR "inbox: $p is owned by another user; not writing there"; return 1; }
+    done
+    tmp="$(mktemp "${d}/.${file}.XXXXXX" 2>/dev/null)" || return 1
+    if ! { printf '%s\n' "$text" > "$tmp" && chmod 600 "$tmp" && _quintet_rename "$tmp" "${d}/${file}.md"; }; then
+        rm -f -- "$tmp"; return 1
+    fi
+    if ex="$(git -C "$cwd" rev-parse --git-path info/exclude 2>/dev/null)"; then
+        [[ "$ex" == /* ]] || ex="${cwd}/${ex}"
+        if [[ ! -L "$ex" ]] && ! grep -qxF '.quintet/' "$ex" 2>/dev/null; then
+            mkdir -p -- "$(dirname -- "$ex")" 2>/dev/null && printf '.quintet/\n' >> "$ex"
+        fi
+    fi
+    printf '%s\n' "${d}/${file}.md"
+}
+
+# _quintet_team_deliver <team> <worker> <text> [check] — type <text>, press
+# Enter, and (check=true, the default) confirm it was submitted: the input line
+# must no longer hold the text's tail. While it does, a dialog stops the retries
+# (an Enter would answer it), a busy footer waits, otherwise Enter is pressed
+# again, up to 3 times. The text is never retyped. Texts under 6 characters
+# (e.g. "y") aren't checked: they'd match a placeholder.
+# 0 sent; 1 no such window; 3 pane dead or in copy-mode; 4 still unsent after
+# the retries; 5 a dialog is up with the text unsent.
+_quintet_team_deliver() {
+    local team="$1" worker="$2" text="$3" check="${4:-true}" st tail line tries=0 waits=0
+    local delay="${QUINTET_SUBMIT_CHECK_DELAY:-0.8}"
+    st="$(quintet_window_state "$team" "$worker")" || return 1
+    [[ "$st" == "0 0" ]] || return 3
+    quintet_window_type "$team" "$worker" "$text" || return 1
+    sleep 0.4
+    quintet_window_key "$team" "$worker" Enter || return 1
+    tail="${text//[[:space:]]/}"; tail="${tail: -8}"
+    [[ "$check" == true && ${#tail} -ge 6 ]] || return 0
+    while :; do
+        sleep "$delay"
+        line="$(quintet_window_input_line "$team" "$worker")" || return 1
+        [[ "${line//[[:space:]]/}" == *"$tail"* ]] || return 0
+        _quintet_detect_worker_modal "$team" "$worker" >/dev/null && return 5
+        if _quintet_worker_busy "$team" "$worker" && (( waits < 10 )); then
+            waits=$((waits + 1)); continue
+        fi
+        (( tries < 3 )) || return 4
+        tries=$((tries + 1))
+        quintet_window_key "$team" "$worker" Enter || return 1
+    done
+}
+
+# _quintet_deliver_msg <rc> — text for a non-zero _quintet_team_deliver status.
+_quintet_deliver_msg() {
+    case "$1" in
+        1) echo "no such worker window" ;;
+        3) echo "the pane is dead or in copy-mode (press q in it to leave copy-mode)" ;;
+        4) echo "typed, but still in the input line after 3 extra Enters" ;;
+        5) echo "typed, but a dialog came up before it was submitted" ;;
+        *) echo "send failed (status $1)" ;;
+    esac
+}
+
 # _quintet_team_hold <team> <worker> <modal> <text> — keep <text> in
 # held/<worker>.txt (0600 in a 0700 dir, written via temp + rename so a planted
 # symlink is replaced, not followed), note it on the taskboard and tell the user
@@ -418,7 +508,11 @@ _quintet_team_kickoff() {
         sleep 0.5
     done
     modal="$(_quintet_detect_worker_modal "$team" "$worker")"; rc=$?
-    [[ $rc -eq 1 ]] && { quintet_window_send "$team" "$worker" "$text"; return; }
+    if [[ $rc -eq 1 ]]; then
+        _quintet_team_deliver "$team" "$worker" "$text"; rc=$?
+        [[ $rc -eq 0 ]] || log WARN "${worker} kickoff: $(_quintet_deliver_msg "$rc"). Check: quintet team capture ${team} ${worker}"
+        return
+    fi
     [[ $rc -eq 2 ]] && modal="INSPECTION_ERROR"
     _quintet_team_hold "$team" "$worker" "$modal" "$text"
 }
@@ -457,11 +551,16 @@ quintet_team_resume() {
             failed=1; continue
         fi
         text="$(cat -- "$f")"
-        if quintet_window_send "$name" "$w" "$text"; then
+        _quintet_team_deliver "$name" "$w" "$text"; rc=$?
+        if [[ $rc -eq 0 ]]; then
             rm -f -- "$f"
             log INFO "resumed ${name}/${w}"
+        elif [[ $rc -eq 1 || $rc -eq 3 ]]; then
+            log ERROR "team resume: $w: $(_quintet_deliver_msg "$rc"); task kept in $f"; failed=1
         else
-            log ERROR "team resume: send to $w failed; task kept in $f"; failed=1
+            # Typed already: keeping the file would make the next resume retype it.
+            rm -f -- "$f"
+            log ERROR "team resume: $w: $(_quintet_deliver_msg "$rc"). Check: quintet team capture ${name} ${w}"; failed=1
         fi
     done
     return "$failed"
@@ -605,24 +704,55 @@ quintet_team_capture() {
     fi
 }
 
-# quintet_team_send <name> <worker> <text> [--force] — refuses while the worker
-# shows a recognized modal (the Enter would answer it) unless --force.
+# _quintet_team_cwd <team> <worker> — the team's working dir: team.json's cwd,
+# else the worker pane's current path.
+_quintet_team_cwd() {
+    local f c=""; f="$(_quintet_team_dir "$1")/team.json"
+    [[ -f "$f" ]] && have_jq && c="$(jq -r '.cwd // empty' "$f" 2>/dev/null)"
+    [[ -n "$c" ]] || c="$(qtmux display-message -p -t "=$(quintet_tmux_session "$1"):=$2" '#{pane_current_path}' 2>/dev/null)"
+    [[ -n "$c" && -d "$c" ]] && printf '%s\n' "$c"
+}
+
+# Text longer than this many bytes, or with a newline, goes to an inbox file and
+# the worker gets a one-line nudge to read it.
+QUINTET_SEND_INLINE_MAX="${QUINTET_SEND_INLINE_MAX:-300}"
+
+# quintet_team_send <name> <worker> <text> [--force] [--busy-ok] — refuses while
+# the worker shows a recognized modal (the Enter would answer it) unless --force,
+# and while it is mid-turn unless --busy-ok.
 quintet_team_send() {
-    local force=false a modal
+    local force=false busy_ok=false a modal
     local -a pos=()
     for a in "$@"; do
-        if [[ "$a" == --force ]]; then force=true; else pos+=( "$a" ); fi
+        case "$a" in
+            --force)   force=true ;;
+            --busy-ok) busy_ok=true ;;
+            *)         pos+=( "$a" ) ;;
+        esac
     done
     local name="${pos[0]:-}" worker="${pos[1]:-}" text="${pos[2]:-}"
-    [[ -n "$name" && -n "$worker" && -n "$text" && ${#pos[@]} -eq 3 ]] || die "usage: quintet team send <name> <worker> <text> [--force]"
+    [[ -n "$name" && -n "$worker" && -n "$text" && ${#pos[@]} -eq 3 ]] || die "usage: quintet team send <name> <worker> <text> [--force] [--busy-ok]"
     quintet_validate_team_name "$name"
+    [[ "$worker" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "team send: invalid worker name '$worker'"
     quintet_session_exists "$name" || die "team '$name' is not running"
+    quintet_window_state "$name" "$worker" >/dev/null \
+        || die "team send: no worker window '$worker' in team '$name' (worker names are exact; see: quintet team status $name)"
     if [[ "$force" != true ]] && modal="$(_quintet_detect_worker_modal "$name" "$worker")"; then
         die "team send: ${worker} shows a modal (${modal}); the Enter after your text would answer it. Attach (tmux attach -t $(quintet_tmux_session "$name")) or re-run with --force to answer it on purpose"
     fi
-    quintet_window_send "$name" "$worker" "$text" \
-        || die "team send: no worker window '$worker' in team '$name' (worker names are exact; see: quintet team status $name)"
-    log INFO "sent to ${name}/${worker}"
+    if [[ "$busy_ok" != true ]] && _quintet_worker_busy "$name" "$worker"; then
+        die "team send: ${worker} is mid-turn; wait for it to finish, or re-run with --busy-ok to type now (the CLI may queue it)"
+    fi
+    local msg="$text" cwd path rc
+    if [[ "$force" != true && ( "$text" == *$'\n'* || ${#text} -gt $QUINTET_SEND_INLINE_MAX ) ]]; then
+        cwd="$(_quintet_team_cwd "$name" "$worker")" || die "team send: can't find the team's working dir for the inbox file"
+        path="$(_quintet_inbox_write "$cwd" "$name" "${worker}-$(date +%s)-$$" "$text")" || die "team send: cannot write the inbox file under ${cwd}/.quintet/inbox"
+        msg="Read and follow ${path} now."
+    fi
+    if [[ "$force" == true ]]; then _quintet_team_deliver "$name" "$worker" "$msg" false; else _quintet_team_deliver "$name" "$worker" "$msg"; fi
+    rc=$?
+    [[ $rc -eq 0 ]] || die "team send: ${worker}: $(_quintet_deliver_msg "$rc")"
+    log INFO "sent to ${name}/${worker}${path:+ (via $path)}"
 }
 
 quintet_team_shutdown() {
