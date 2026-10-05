@@ -82,6 +82,9 @@ quintet team shutdown auth-feat --force
 quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy --model gpt-6.1-sol --effort high
 quintet debate  "gRPC or REST for this internal service?"
 quintet review  "$(git diff HEAD~1)" claude,agy,copilot --safe
+quintet review  "$(git diff HEAD~1)" claude,codex --json | jq '.[] | {provider, verdict}'
+#   each reviewer ends with a JSON verdict block; review prints a verdict table
+#   (or, with --json, a JSON array). A seat without a valid block shows "unparsed".
 
 # Non-tmux escape hatch
 quintet fleet --no-tmux "quick advisory prompt" codex,claude

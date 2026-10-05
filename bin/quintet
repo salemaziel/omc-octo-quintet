@@ -65,7 +65,10 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
                   [--deadline SECS]
   quintet consult "<prompt>" [providers] [same flags]    # alias of fleet (advisory)
   quintet debate  "<question>" [providers] [same flags]  # 2-round cross-critique
-  quintet review  "<diff|file|desc>" [providers] [same flags]
+  quintet review  "<diff|file|desc>" [providers] [same flags] [--json]
+                  # ends with a verdict table (verdict + high/med/low counts per seat;
+                  # "unparsed" when a seat gave no valid JSON block). --json prints only
+                  # that as a JSON array on stdout; the answers go to stderr.
 
   [providers] = "all" (default) | comma list, e.g.  claude,codex,agy,opencode
   --model/--effort take a bare value only with a single provider; otherwise use

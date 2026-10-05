@@ -558,14 +558,66 @@ quintet_fleet_parallel() {
     local rundir
     rundir="$(_quintet_fan_out "$prompt" "$prov_arg" "${plist[@]}")" || return 1
     [[ -d "$rundir" ]] || return 1
-    _quintet_render_dir "$rundir"
+    # _q_review is set (local) by quintet_fleet_review: table | json.
+    case "${_q_review:-}" in
+        json)  _quintet_render_dir "$rundir" >&2; _quintet_review_verdicts "$rundir" json ;;
+        table) _quintet_render_dir "$rundir"; _quintet_review_verdicts "$rundir" table ;;
+        *)     _quintet_render_dir "$rundir" ;;
+    esac
     rm -rf "$rundir" 2>/dev/null || true
 }
 
+# _quintet_review_json <answer file> — the last ```json fenced block of an
+# answer as {verdict, findings}; prints nothing (status 1) if it's missing or invalid.
+_quintet_review_json() {
+    have_jq || return 1
+    awk '/^[[:space:]]*```json[[:space:]]*$/ { buf = ""; inb = 1; next }
+         inb && /^[[:space:]]*```[[:space:]]*$/ { last = buf; inb = 0; next }
+         inb { buf = buf $0 "\n" }
+         END { printf "%s", last }' "$1" \
+        | jq -ce 'select(type == "object" and (.verdict | type) == "string")
+                  | {verdict, findings: ((.findings // []) | if type == "array" then . else [] end)}' 2>/dev/null
+}
+
+# _quintet_review_verdicts <rundir> table|json — one row per seat: the verdict
+# and finding counts by severity. A failed seat or a missing/invalid block is
+# "unparsed"; it never changes the exit code.
+_quintet_review_verdicts() {
+    local rundir="$1" mode="$2" f base st v
+    local -a rows=()
+    [[ "$mode" == json ]] && ! have_jq && { log ERROR "review --json needs jq"; return 1; }
+    for f in "$rundir"/*.out; do
+        [[ -e "$f" ]] || continue
+        base="$(basename "$f" .out)"
+        st="$(cat "${f}.status" 2>/dev/null || echo "?")"
+        v=""
+        [[ "$st" == 0:* ]] && v="$(_quintet_review_json "$f")"
+        [[ -n "$v" ]] || v='{"verdict":"unparsed","findings":[]}'
+        if [[ "$mode" == json ]]; then
+            rows+=( "$(jq -c --arg p "$(_quintet_answer_label "$base")" --arg s "$st" '{provider: $p, status: $s} + .' <<< "$v")" )
+        else
+            rows+=( "$(printf '%s\t%s' "$(_quintet_answer_label "$base")" "$(have_jq && jq -r '[.verdict, ([.findings[] | (.severity? // "" | tostring | ascii_downcase)] as $s | ("high","medium","low") as $k | [$s[] | select(. == $k)] | length)] | @tsv' <<< "$v" || echo unparsed)")" )
+        fi
+    done
+    if [[ "$mode" == json ]]; then
+        printf '%s\n' "${rows[@]}" | jq -s .
+    else
+        echo "Review verdicts:"
+        printf '  %-28s %-16s %4s %4s %4s\n' provider verdict high med low
+        local r p rest
+        for r in "${rows[@]}"; do
+            p="${r%%$'\t'*}"; rest="${r#*$'\t'}"
+            # shellcheck disable=SC2086  # split the tab-separated fields
+            printf '  %-28s %-16s %4s %4s %4s\n' "$p" ${rest//$'\t'/ }
+        done
+    fi
+}
+
 quintet_fleet_review() {
-    local target="" prov_arg=""
+    local target="" prov_arg="" _q_review=table
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --json)    _q_review=json; shift ;;
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
             --tmux)    export QUINTET_FLEET_TMUX=true; shift ;;
             --no-mcp)  export QUINTET_NO_MCP=true; shift ;;
@@ -588,7 +640,12 @@ quintet_fleet_review() {
     [[ "$target" == "-" ]] && target="$(cat)"
     [[ -n "$target" ]] || die "fleet review: missing target (a diff, file path, or description)"
     local prompt
-    prompt="You are performing a focused code review. Identify correctness bugs, security issues, and risky patterns. Be specific (file:line where possible) and rank findings by severity. Do not restate the code. Review target:
+    prompt="You are performing a focused code review. Identify correctness bugs, security issues, and risky patterns. Be specific (file:line where possible) and rank findings by severity. Do not restate the code.
+
+End your answer with one fenced \`\`\`json block, exactly this shape:
+{\"verdict\": \"approve|request-changes|comment\", \"findings\": [{\"severity\": \"high|medium|low\", \"file\": \"path\", \"line\": 0, \"title\": \"short summary\"}]}
+
+Review target:
 
 ${target}"
     quintet_fleet_parallel "$prompt" "$prov_arg"

@@ -621,6 +621,15 @@ el=$(( $(date +%s) - t0 ))
 [[ $el -lt 8 ]] && echo "$out" | grep -q "codex   \[124:timeout\] (partial)" && echo "$out" | grep -q "part1-44" && echo "$out" | grep -q "skipping fallback" && ! pgrep -x -f "sleep 3182" >/dev/null \
     && ok "deadline stops the seat, keeps partial output, skips the fallback (${el}s, 4.3/4.4)" || { pkill -x -f "sleep 3182"; bad "deadline stops the seat, keeps partial output, skips the fallback (${el}s, 4.3/4.4)"; }
 
+# 5.4: review ends with a verdict table; a seat without a JSON block is "unparsed";
+# --json prints only the array on stdout.
+printf '%s\n' "bug in a.sh" '```json' '{"verdict":"request-changes","findings":[{"severity":"High","file":"a.sh","line":3,"title":"x"}]}' '```' > "$F/rv54.txt"
+out=$(ff env QUINTET_HOME="$F/p5home" QUINTET_CLAUDE_ONESHOT_CMD="cat $F/rv54.txt" QUINTET_CODEX_ONESHOT_CMD='echo looks fine' "$BIN" review --no-tmux "diff" claude,codex 2>&1)
+js=$(ff env QUINTET_HOME="$F/p5home" QUINTET_CLAUDE_ONESHOT_CMD="cat $F/rv54.txt" QUINTET_CODEX_ONESHOT_CMD='echo looks fine' "$BIN" review --no-tmux --json "diff" claude,codex 2>/dev/null)
+echo "$out" | grep -Eq "^  claude +request-changes +1 +0 +0$" && echo "$out" | grep -Eq "^  codex +unparsed +0 +0 +0$" \
+    && [[ "$(jq -r 'length, (.[] | select(.provider == "claude") | .findings[0].line)' <<< "$js" 2>/dev/null | tr '\n' ' ')" == "2 3 " ]] \
+    && ok "review verdict table, unparsed seat, --json array (5.4)" || bad "review verdict table, unparsed seat, --json array (5.4)"
+
 # A6: poll deadline follows the slowest provider timeout, not QUINTET_TIMEOUT.
 out=$(ff env QUINTET_TIMEOUT=1 QUINTET_CODEX_TIMEOUT=20 QUINTET_TEST_SLEEP=4 "$BIN" fleet "hi" codex 2>&1)
 echo "$out" | grep -q "stub codex answer" && echo "$out" | grep -q "codex   \[0:ok\]" && ! echo "$out" | grep -q "124" && ok "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)" || bad "QUINTET_CODEX_TIMEOUT > QUINTET_TIMEOUT: no premature 124 (A6)"
