@@ -111,11 +111,16 @@ When running in safe mode, run `quintet team doctor <name>` to scan worker panes
 
 To clean up defunct team state directories and expired debate transcripts:
 ```bash
-$BIN prune [--days N] [--dry-run] [--force]
+$BIN prune [--days N] [--dry-run]
 ```
-- Scans `QUINTET_STATE_DIR/teams/` for directories whose tmux session has terminated. Active teams are **never** removed.
+- Scans `QUINTET_STATE_DIR/teams/` for directories whose tmux session has terminated. Active teams are **never** removed. Each team is checked and deleted under a per-team lock that `team start` also takes.
 - Scans `QUINTET_HOME/debates/` for debate transcripts older than `N` days (default: 7).
-- Pass `--days 0` to immediately prune all dead sessions and aged debate transcripts.
+- Age means inactivity: the newest mtime of the directory and the files in it. A directory whose timestamp can't be read is skipped with a WARN.
+- Kills orphaned `quintet-fleet-<epoch>-*` sessions older than 60 minutes (e.g. from an interrupted fleet run).
+- Pass `--days 0` to immediately prune all dead sessions and aged debate transcripts. `--dry-run` lists candidates and deletes nothing. `--force` is a deprecated no-op.
+- Fails closed: if tmux is missing, or `tmux list-sessions` fails for any reason other than "no server running" (no socket, or a stale socket left by a crashed server), prune exits nonzero and deletes nothing.
+- State dirs whose name isn't a valid team name (`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`) and anything under `QUINTET_HOME/teams/` are skipped with a WARN; prune prints the `rm -rf` command to remove an invalid-named dir by hand.
+- Exits nonzero if any removal failed.
 
 ### The team manifest
 

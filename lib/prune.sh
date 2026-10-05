@@ -1,23 +1,64 @@
 #!/usr/bin/env bash
-# quintet/lib/prune.sh — garbage-collect defunct team state dirs and aged debates.
+# quintet/lib/prune.sh — garbage-collect defunct team state dirs, aged debates and
+# orphaned fleet sessions.
 #
 # Design:
-#   1. Scans ${QUINTET_STATE_DIR}/teams/ and ${QUINTET_HOME}/teams/ for directories
-#      whose tmux session has exited. Active teams are NEVER removed.
-#   2. Scans ${QUINTET_HOME}/debates/ for debate archives older than N days.
-#   3. Supports --days N (default: 7), --dry-run, and --force.
+#   1. Takes one tmux session inventory up front. tmux missing -> die. No server
+#      ("no server running", or no socket file) -> zero sessions. Any other
+#      list-sessions error (e.g. permission denied on the socket) -> die: prune
+#      fails closed instead of treating "can't tell" as "dead".
+#   2. Scans ${QUINTET_STATE_DIR}/teams/ for dirs whose session quintet-<name> is
+#      not in the inventory (exact match). Each team is checked and deleted under
+#      quintet_lock, and liveness is re-read under the lock. Live teams are NEVER
+#      removed. Dirs whose name fails quintet_validate_team_name are skipped with
+#      a WARN and a manual cleanup command. ${QUINTET_HOME}/teams is skipped with
+#      a WARN (nothing writes there; no lock covers it).
+#   3. Scans ${QUINTET_HOME}/debates/ for archives older than N days.
+#   4. Kills orphaned quintet-fleet-<epoch>-* sessions older than 60 minutes.
+#   Age = inactivity: newest mtime of the dir and its regular files. Unknown
+#   timestamps are skipped with a WARN, never treated as old.
+#   Flags: --days N (default 7), --dry-run (report candidates only).
+#   --force is a deprecated no-op.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# _quintet_mtime_epoch <path> — mtime in epoch seconds; nonzero on failure.
 _quintet_mtime_epoch() {
-    local target="$1"
-    local ep
-    ep="$(stat -c %Y "$target" 2>/dev/null)" && { echo "$ep"; return 0; }
-    ep="$(stat -f %m "$target" 2>/dev/null)" && { echo "$ep"; return 0; }
-    python3 -c "import os; print(int(os.path.getmtime('$target')))" 2>/dev/null || echo 0
+    local target="$1" ep
+    ep="$(stat -c %Y -- "$target" 2>/dev/null)" && [[ "$ep" =~ ^[0-9]+$ ]] && { echo "$ep"; return 0; }
+    ep="$(stat -f %m -- "$target" 2>/dev/null)" && [[ "$ep" =~ ^[0-9]+$ ]] && { echo "$ep"; return 0; }
+    ep="$(python3 -c 'import os,sys; print(int(os.path.getmtime(sys.argv[1])))' "$target" 2>/dev/null)" \
+        && [[ "$ep" =~ ^[0-9]+$ ]] && { echo "$ep"; return 0; }
+    return 1
+}
+
+# _quintet_latest_activity_epoch <dir> — newest mtime of <dir> and every regular
+# file under it; nonzero if the dir, any file, or the traversal can't be read.
+_quintet_latest_activity_epoch() {
+    local dir="$1" newest t f
+    newest="$(_quintet_mtime_epoch "$dir")" || return 1
+    while IFS= read -r -d '' f; do
+        [[ "$f" == "FIND_FAILED" ]] && return 1
+        t="$(_quintet_mtime_epoch "$f")" || return 1
+        (( t > newest )) && newest="$t"
+    done < <(command find "$dir" -type f -print0 2>/dev/null || printf 'FIND_FAILED\0')
+    echo "$newest"
+}
+
+# _quintet_session_inventory — print live tmux session names (one per line).
+# Exit 0 with no output when no server is running; nonzero on any other error.
+_quintet_session_inventory() {
+    local out
+    if out="$(qtmux list-sessions -F '#{session_name}' 2>&1)"; then
+        [[ -n "$out" ]] && printf '%s\n' "$out"
+        return 0
+    fi
+    [[ "$out" == *"no server running on "* || "$out" == *"error connecting to "*"(No such file or directory)"* ]] && return 0
+    printf '%s\n' "$out" >&2
+    return 1
 }
 
 quintet_prune() {
-    local days=7 dry_run=false force=false
+    local days=7 dry_run=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --days)
@@ -25,64 +66,119 @@ quintet_prune() {
                 [[ "$2" =~ ^[0-9]{1,6}$ ]] || die "--days requires a nonnegative decimal integer (max 6 digits), got '$2'"
                 days=$((10#$2)); shift 2 ;;
             --dry-run)  dry_run=true; shift ;;
-            --force|-f) force=true; shift ;;
+            --force|-f) log WARN "prune: $1 is deprecated and has no effect"; shift ;;
             *) die "unknown prune flag: $1" ;;
         esac
     done
 
+    quintet_tmux_available || die "prune: tmux unavailable; cannot verify team liveness (nothing deleted)"
+    local inventory
+    inventory="$(_quintet_session_inventory)" || die "prune: cannot read tmux session inventory (nothing deleted)"
+
     local now; now="$(date +%s)"
     local cutoff_sec=$(( days * 86400 ))
-    local pruned_teams=0 pruned_debates=0
+    local teams_n=0 debates_n=0 fleets_n=0 failures=0
 
     echo "==> Quintet prune: scanning for stale state older than ${days} day(s) (dry-run: ${dry_run})"
 
-    # 1. Prune dead team directories
-    local team_bases=()
-    [[ -d "${QUINTET_STATE_DIR}/teams" ]] && team_bases+=("${QUINTET_STATE_DIR}/teams")
+    # 1. Dead team directories (QUINTET_STATE_DIR only; it's the one team_start locks).
     if [[ -n "${QUINTET_HOME:-}" && -d "${QUINTET_HOME}/teams" && "${QUINTET_HOME}/teams" != "${QUINTET_STATE_DIR}/teams" ]]; then
-        team_bases+=("${QUINTET_HOME}/teams")
+        log WARN "prune: skipping ${QUINTET_HOME}/teams (not lock-protected); clean it manually if needed"
     fi
-
-    local tbase tdir tname mtime age
-    for tbase in "${team_bases[@]}"; do
-        for tdir in "${tbase}"/*; do
+    local tdir tname mtime age
+    if [[ -d "${QUINTET_STATE_DIR}/teams" ]]; then
+        for tdir in "${QUINTET_STATE_DIR}/teams"/*; do
             [[ -d "$tdir" ]] || continue
             tname="$(basename "$tdir")"
-            if quintet_session_exists "$tname"; then
-                # Session is currently alive, protect it
+            if ! ( quintet_validate_team_name "$tname" ) 2>/dev/null; then
+                log WARN "prune: skipping '$tname' (not a valid team name). Remove manually if stale: rm -rf -- $(printf '%q' "$tdir")"
                 continue
             fi
-
-            mtime="$(_quintet_mtime_epoch "$tdir")"
+            grep -qxF -- "quintet-${tname}" <<< "$inventory" && continue
+            if ! quintet_lock "$tname"; then
+                log WARN "prune: skipping '$tname' (locked by another quintet process)"
+                continue
+            fi
+            # Re-check liveness under the lock: the team may have started since
+            # the inventory was taken.
+            inventory="$(_quintet_session_inventory)" || { quintet_unlock "$tname"; die "prune: cannot read tmux session inventory"; }
+            if grep -qxF -- "quintet-${tname}" <<< "$inventory"; then
+                quintet_unlock "$tname"; continue
+            fi
+            if ! mtime="$(_quintet_latest_activity_epoch "$tdir")"; then
+                log WARN "prune: skipping '$tname' (unknown timestamp)"
+                quintet_unlock "$tname"; continue
+            fi
             age=$(( now - mtime ))
             if [[ "$days" -eq 0 || $age -ge $cutoff_sec ]]; then
-                echo "  • Dead team state: $tname ($(basename "$tdir"), age: $((age / 86400))d)"
-                pruned_teams=$((pruned_teams + 1))
-                if [[ "$dry_run" != "true" ]]; then
-                    rm -rf "$tdir"
+                if [[ "$dry_run" == "true" ]]; then
+                    echo "  • Candidate dead team state: $tname (idle: $((age / 86400))d)"
+                    teams_n=$((teams_n + 1))
+                elif rm -rf -- "$tdir" 2>/dev/null && [[ ! -e "$tdir" ]]; then
+                    echo "  • Removed dead team state: $tname (idle: $((age / 86400))d)"
+                    teams_n=$((teams_n + 1))
+                else
+                    log ERROR "prune: failed to remove $tdir"
+                    failures=$((failures + 1))
                 fi
             fi
+            quintet_unlock "$tname"
         done
-    done
+    fi
 
-    # 2. Prune aged debate archives
+    # 2. Aged debate archives.
     local debate_base="${QUINTET_HOME:-$HOME/.quintet}/debates"
     local ddir dname
     if [[ -d "$debate_base" ]]; then
         for ddir in "${debate_base}"/*; do
             [[ -d "$ddir" ]] || continue
             dname="$(basename "$ddir")"
-            mtime="$(_quintet_mtime_epoch "$ddir")"
+            if ! mtime="$(_quintet_latest_activity_epoch "$ddir")"; then
+                log WARN "prune: skipping debate '$dname' (unknown timestamp)"
+                continue
+            fi
             age=$(( now - mtime ))
             if [[ "$days" -eq 0 || $age -ge $cutoff_sec ]]; then
-                echo "  • Stale debate archive: $dname (age: $((age / 86400))d)"
-                pruned_debates=$((pruned_debates + 1))
-                if [[ "$dry_run" != "true" ]]; then
-                    rm -rf "$ddir"
+                if [[ "$dry_run" == "true" ]]; then
+                    echo "  • Candidate debate archive: $dname (idle: $((age / 86400))d)"
+                    debates_n=$((debates_n + 1))
+                elif rm -rf -- "$ddir" 2>/dev/null && [[ ! -e "$ddir" ]]; then
+                    echo "  • Removed debate archive: $dname (idle: $((age / 86400))d)"
+                    debates_n=$((debates_n + 1))
+                else
+                    log ERROR "prune: failed to remove $ddir"
+                    failures=$((failures + 1))
                 fi
             fi
         done
     fi
 
-    echo "==> Prune complete: ${pruned_teams} dead team(s), ${pruned_debates} debate archive(s) removed."
+    # 3. Orphaned fleet sessions (Ctrl-C'd / crashed fleet runs) older than 60 min.
+    local s ep
+    while IFS= read -r s; do
+        [[ "$s" =~ ^quintet-fleet-([0-9]+)-[0-9]+-[0-9]+$ ]] || continue
+        ep="${BASH_REMATCH[1]}"
+        (( now - 10#$ep > 3600 )) || continue
+        if [[ "$dry_run" == "true" ]]; then
+            echo "  • Candidate orphaned fleet session: $s"
+            fleets_n=$((fleets_n + 1))
+        elif qtmux kill-session -t "=$s" 2>/dev/null; then
+            echo "  • Killed orphaned fleet session: $s"
+            fleets_n=$((fleets_n + 1))
+        else
+            log ERROR "prune: failed to kill session $s"
+            failures=$((failures + 1))
+        fi
+    done <<< "$inventory"
+
+    if [[ "$dry_run" == "true" ]]; then
+        echo "==> Prune dry-run: ${teams_n} candidate team(s), ${debates_n} candidate debate archive(s), ${fleets_n} candidate fleet session(s); nothing removed."
+    else
+        echo "==> Prune complete: ${teams_n} dead team(s), ${debates_n} debate archive(s) removed, ${fleets_n} orphaned fleet session(s) killed."
+    fi
+    if [[ $failures -gt 0 ]]; then
+        log ERROR "prune: ${failures} item(s) could not be removed"
+        return 1
+    fi
+    return 0
 }

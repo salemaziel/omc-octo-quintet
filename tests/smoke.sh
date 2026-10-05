@@ -95,7 +95,8 @@ echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then
     echo "  ⚠️  tmux not installed — skipping team lifecycle"
 else
-    # Pre-flight auth checks
+    # Pre-flight auth checks (state in a sandbox, never the repo's ./.quintet)
+    export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
     auth_err=$("$BIN" team 1:qwen "fail task" --name "smoke-auth-fail-$$" --cwd /tmp 2>&1 || true)
     echo "$auth_err" | grep -q "not ready/authenticated" && ok "pre-flight auth rejects unready provider" || bad "pre-flight auth rejects unready provider"
     ttmux has-session -t "quintet-smoke-auth-fail-$$" 2>/dev/null && bad "pre-flight session created on failure" || ok "no session created on auth failure"
@@ -105,8 +106,9 @@ else
     ttmux has-session -t "quintet-smoke-auth-skip-$$" 2>/dev/null && ok "--skip-auth-check permits start" || bad "--skip-auth-check permits start"
     "$BIN" team shutdown "smoke-auth-skip-$$" --force >/dev/null 2>&1 || true
     unset QUINTET_QWEN_LAUNCH QUINTET_QWEN_WARMUP
+    rm -rf "$QUINTET_STATE_DIR"
 
-    export QUINTET_STATE_DIR; QUINTET_STATE_DIR="$(mktemp -d)"
+    QUINTET_STATE_DIR="$(mktemp -d)"
     export QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=2
     T="smoke-$$"
     "$BIN" team 1:claude:implementer,1:claude:stock "smoke" --name "$T" --cwd /tmp --no-mcp --safe >/dev/null 2>&1 && ok "team start" || bad "team start"
@@ -381,6 +383,110 @@ out=$(fleet_x fleet --no-tmux "hi" codex --model bogus=X 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "unsupported provider" && ok "fleet --model with unknown provider key exits 1" || bad "fleet --model with unknown provider key exits 1"
 
 rm -rf "$X"
+
+echo "── 8. prune safety ──"
+# Everything lives in a sandbox: fake state dir, QUINTET_HOME and HOME. tmux is
+# the private test socket (or a missing one for the idle case).
+P="$(mktemp -d)"; mkdir -p "$P/state/teams" "$P/home" "$P/stub/nostat" "$P/stub/nostatpy" "$P/nobin"
+pr() { ( export QUINTET_STATE_DIR="$P/state" QUINTET_HOME="$P/home" HOME="$P/home"; "$BIN" prune "$@" ); }
+# mk_old <dir> — team/debate dir whose dir and files are 10 days old.
+mk_old() { mkdir -p "$1"; echo '{}' > "$1/team.json"; touch -d '10 days ago' "$1/team.json" "$1"; }
+for s in nostat nostatpy; do printf '#!/bin/sh\nexit 1\n' > "$P/stub/$s/stat"; done
+printf '#!/bin/sh\nexit 1\n' > "$P/stub/nostatpy/python3"; chmod +x "$P"/stub/*/*
+
+# M5 / C2: no tmux server is "zero sessions", not an error.
+mk_old "$P/state/teams/idle-$$"
+out=$(QUINTET_TMUX_SOCKET="quintet-test-$$-idle" pr --days 1 2>&1); rc=$?
+[[ $rc -eq 0 && ! -d "$P/state/teams/idle-$$" ]] && ok "prune with no tmux server runs (M5)" || bad "prune with no tmux server runs (M5) (rc=$rc)"
+# C2: tmux missing -> die, nothing deleted.
+for c in /usr/bin/* /bin/*; do b="${c##*/}"; [[ "$b" == tmux || -e "$P/nobin/$b" ]] || ln -s "$c" "$P/nobin/$b"; done
+mk_old "$P/state/teams/notmux-$$"
+out=$(PATH="$P/nobin" pr --days 1 2>&1); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "tmux unavailable" && [[ -d "$P/state/teams/notmux-$$" ]] && ok "prune without tmux dies, deletes nothing (C2)" || bad "prune without tmux dies, deletes nothing (C2)"
+# C2: an inventory error other than "no server" fails closed.
+mkdir -p "$P/tt/tmux-$(id -u)"; chmod 000 "$P/tt/tmux-$(id -u)"
+out=$(TMUX_TMPDIR="$P/tt" pr --days 1 2>&1); rc=$?
+chmod 700 "$P/tt/tmux-$(id -u)"
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "cannot read tmux session inventory" && [[ -d "$P/state/teams/notmux-$$" ]] && ok "prune on unreadable tmux socket fails closed (C2)" || bad "prune on unreadable tmux socket fails closed (C2)"
+rm -rf "$P/state/teams/notmux-$$"
+
+# Live team is never deleted, even with old state and --days 0.
+( export QUINTET_STATE_DIR="$P/state" HOME="$P/home" QUINTET_HOME="$P/home" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
+  "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 )
+touch -d '10 days ago' "$P/state/teams/live-$$"/* "$P/state/teams/live-$$"
+pr --days 0 >/dev/null 2>&1
+[[ -d "$P/state/teams/live-$$" ]] && ok "live team state never deleted" || bad "live team state never deleted"
+[[ ! -e "$P/state/locks/live-$$.lock" ]] && ok "team start released its lock" || bad "team start released its lock"
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "live-$$" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+[[ $rc -eq 1 && ! -e "$P/state/locks/live-$$.lock" ]] && echo "$out" | grep -q "already running" && ok "die path in team start releases lock" || bad "die path in team start releases lock"
+QUINTET_STATE_DIR="$P/state" "$BIN" team shutdown "live-$$" >/dev/null 2>&1
+
+# Locks: a live holder blocks prune and team start; a dead holder's lock is broken.
+sleep 60 & live_pid=$!
+mk_old "$P/state/teams/lk-$$"; mkdir -p "$P/state/locks/lk-$$.lock"; echo "$live_pid" > "$P/state/locks/lk-$$.lock/pid"
+out=$(pr --days 1 2>&1)
+[[ -d "$P/state/teams/lk-$$" ]] && echo "$out" | grep -q "skipping 'lk-$$' (locked" && ok "prune skips team locked by a live pid (C2)" || bad "prune skips team locked by a live pid (C2)"
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home" QUINTET_CLAUDE_LAUNCH='bash --norc'; "$BIN" team 1:claude "t" --name "lk-$$" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "is locked" && ! ttmux has-session -t "=quintet-lk-$$" 2>/dev/null && ok "team start refuses a locked team (C2)" || bad "team start refuses a locked team (C2)"
+kill "$live_pid" 2>/dev/null; wait "$live_pid" 2>/dev/null
+( exit 0 ) & dead_pid=$!; wait "$dead_pid"
+echo "$dead_pid" > "$P/state/locks/lk-$$.lock/pid"
+out=$(pr --days 1 2>&1)
+[[ ! -d "$P/state/teams/lk-$$" && ! -e "$P/state/locks/lk-$$.lock" ]] && echo "$out" | grep -q "breaking stale lock" && ok "stale lock (dead pid) broken, team pruned" || bad "stale lock (dead pid) broken, team pruned"
+( export QUINTET_STATE_DIR="$P/state"; source "$ROOT/lib/common.sh"
+  quintet_lock "both-$$" && ! ( quintet_lock "both-$$" ) ) 2>/dev/null && ok "second quintet_lock on a held lock fails" || bad "second quintet_lock on a held lock fails"
+rm -rf "$P/state/locks/both-$$.lock"
+
+# C5: inactivity age = newest file, not dir mtime.
+mk_old "$P/state/teams/busy-$$"; echo "[w1] working" > "$P/state/teams/busy-$$/taskboard.md"; touch -d '10 days ago' "$P/state/teams/busy-$$"
+pr --days 1 >/dev/null 2>&1
+[[ -d "$P/state/teams/busy-$$" ]] && ok "recently touched taskboard keeps old dir (C5)" || bad "recently touched taskboard keeps old dir (C5)"
+rm -rf "$P/state/teams/busy-$$"
+
+# C4: unknown timestamps are skipped; python fallback takes the path as argv.
+mk_old "$P/state/teams/nots-$$"
+out=$(PATH="$P/stub/nostatpy:$PATH" pr --days 1 2>&1)
+[[ -d "$P/state/teams/nots-$$" ]] && echo "$out" | grep -q "unknown timestamp" && ok "unstatable team dir skipped (C4)" || bad "unstatable team dir skipped (C4)"
+mkdir -p "$P/state/teams/nots-$$/sub"; touch -d '10 days ago' "$P/state/teams/nots-$$/sub" "$P/state/teams/nots-$$"; chmod 000 "$P/state/teams/nots-$$/sub"
+out=$(pr --days 1 2>&1)
+chmod 700 "$P/state/teams/nots-$$/sub"
+[[ -d "$P/state/teams/nots-$$" ]] && echo "$out" | grep -q "unknown timestamp" && ok "unreadable subdir: team skipped (C4)" || bad "unreadable subdir: team skipped (C4)"
+rm -rf "$P/state/teams/nots-$$"
+apos="$P/it's here"; mkdir -p "$apos"; touch -d '2020-01-02 03:04:05' "$apos"
+[[ "$(PATH="$P/stub/nostat:$PATH"; source "$ROOT/lib/prune.sh"; _quintet_mtime_epoch "$apos")" == "$(stat -c %Y "$apos")" ]] && ok "python mtime fallback handles an apostrophe (C4)" || bad "python mtime fallback handles an apostrophe (C4)"
+(PATH="$P/stub/nostatpy:$PATH"; source "$ROOT/lib/prune.sh"; _quintet_mtime_epoch "$apos") >/dev/null && bad "mtime helper fails when nothing can stat (C4)" || ok "mtime helper fails when nothing can stat (C4)"
+
+# C9: dry-run counts candidates and deletes nothing; rm failure -> nonzero.
+mk_old "$P/state/teams/dry-$$"; mk_old "$P/home/debates/olddeb-$$"
+out=$(pr --days 1 --dry-run 2>&1); rc=$?
+[[ $rc -eq 0 && -d "$P/state/teams/dry-$$" && -d "$P/home/debates/olddeb-$$" ]] && echo "$out" | grep -q "1 candidate team(s), 1 candidate debate" && ! echo "$out" | grep -q "Prune complete" && ok "dry-run reports candidates, deletes nothing (C9)" || bad "dry-run reports candidates, deletes nothing (C9)"
+chmod 555 "$P/state/teams"
+out=$(pr --days 1 2>&1); rc=$?
+chmod 755 "$P/state/teams"
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "failed to remove" && echo "$out" | grep -q "0 dead team(s)" && ok "rm failure -> nonzero exit, not counted (C9)" || bad "rm failure -> nonzero exit, not counted (C9)"
+touch -d '10 days ago' "$P/state/teams/dry-$$"
+out=$(pr --days 1 --force 2>&1); rc=$?
+[[ $rc -eq 0 && ! -d "$P/state/teams/dry-$$" ]] && echo "$out" | grep -q "WARN.*--force is deprecated" && ok "--force warns (deprecated) and prune still works (C9)" || bad "--force warns (deprecated) and prune still works (C9)"
+
+# Decision 2: invalid-named state dirs and QUINTET_HOME/teams are skipped with a WARN.
+mk_old "$P/state/teams/a.b"; mk_old "$P/home/teams/hometeam"
+out=$(pr --days 1 2>&1)
+[[ -d "$P/state/teams/a.b" ]] && echo "$out" | grep -q "skipping 'a.b' (not a valid team name).*rm -rf --" && ok "invalid team dir name skipped with cleanup hint" || bad "invalid team dir name skipped with cleanup hint"
+[[ -d "$P/home/teams/hometeam" ]] && echo "$out" | grep -q "skipping $P/home/teams" && ok "QUINTET_HOME/teams skipped with WARN" || bad "QUINTET_HOME/teams skipped with WARN"
+out=$( export QUINTET_STATE_DIR="$P/state" HOME="$P/home"; "$BIN" team 1:claude "t" --name "fleet-1-2-3" --skip-auth-check --cwd /tmp 2>&1 ); rc=$?
+[[ $rc -eq 1 ]] && echo "$out" | grep -q "reserved for fleet" && ok "team name in fleet namespace rejected" || bad "team name in fleet namespace rejected"
+
+# M3 (plan 4.7): orphaned fleet sessions older than 60 min are swept (test socket only).
+now_s=$(date +%s); fold="quintet-fleet-$((now_s - 7200))-1-1"; fnew="quintet-fleet-${now_s}-1-2"
+ttmux new-session -d -s "$fold" sleep 600; ttmux new-session -d -s "$fnew" sleep 600
+out=$(pr --dry-run 2>&1)
+ttmux has-session -t "=$fold" 2>/dev/null && echo "$out" | grep -q "Candidate orphaned fleet session: $fold" && ok "dry-run lists old fleet session, keeps it" || bad "dry-run lists old fleet session, keeps it"
+pr >/dev/null 2>&1
+! ttmux has-session -t "=$fold" 2>/dev/null && ok "old quintet-fleet-<epoch> session swept (M3)" || bad "old quintet-fleet-<epoch> session swept (M3)"
+ttmux has-session -t "=$fnew" 2>/dev/null && ok "fresh fleet session kept" || bad "fresh fleet session kept"
+ttmux kill-session -t "=$fnew" 2>/dev/null
+[[ -z "$(find "$P/state/locks" -mindepth 1 2>/dev/null)" ]] && ok "no locks left behind" || bad "no locks left behind"
+chmod -R u+rwx "$P" 2>/dev/null; rm -rf "$P"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"

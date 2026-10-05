@@ -60,6 +60,40 @@ quintet_validate_team_name() {
         || die "invalid team name '${1:-}': must match ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\$ (letter/digit first, then letters, digits, '_' or '-'; max 64 chars)"
 }
 
+# ── Team locks ─────────────────────────────────────────────────────────────────
+# quintet_lock <team> — atomic mkdir lock ${QUINTET_STATE_DIR}/locks/<team>.lock
+# holding the owner's pid. Serializes team creation and prune per team.
+# A lock is stale only when its pid is dead (kill -0 fails); there is no age-based
+# breaking, and a lock with no readable pid yet counts as held. Breaking takes a
+# second mkdir mutex (<team>.lock.break) so two breakers can't both win: rm the
+# stale lock, retry mkdir once. Returns 1 if the lock is held (or can't be made).
+quintet_lock() {
+    local dir="${QUINTET_STATE_DIR}/locks" lk pid
+    lk="${dir}/$1.lock"
+    mkdir -p "$dir" 2>/dev/null || return 1
+    if mkdir "$lk" 2>/dev/null; then echo "$$" > "${lk}/pid"; return 0; fi
+    pid="$(cat "${lk}/pid" 2>/dev/null)"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null && return 1
+    mkdir "${lk}.break" 2>/dev/null || return 1
+    if [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$pid" ]]; then
+        log WARN "breaking stale lock for '$1' (pid $pid is gone)"
+        rm -rf -- "$lk"
+    fi
+    if mkdir "$lk" 2>/dev/null; then
+        echo "$$" > "${lk}/pid"; rmdir "${lk}.break" 2>/dev/null; return 0
+    fi
+    rmdir "${lk}.break" 2>/dev/null
+    return 1
+}
+
+# quintet_unlock <team> — release a lock this process holds (no-op otherwise).
+quintet_unlock() {
+    local lk="${QUINTET_STATE_DIR}/locks/$1.lock"
+    [[ "$(cat "${lk}/pid" 2>/dev/null)" == "$$" ]] && rm -rf -- "$lk"
+    return 0
+}
+
 # ── String / slug helpers ──────────────────────────────────────────────────────
 # Turn arbitrary task text into a short, filesystem-safe team-name slug.
 slugify() {

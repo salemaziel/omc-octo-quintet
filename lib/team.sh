@@ -135,6 +135,18 @@ quintet_team_start() {
     [[ -z "$name" ]] && name="$(slugify "$task")"
     [[ -z "$name" ]] && name="team-$(now_epoch)"
     quintet_validate_team_name "$name"
+    # quintet-fleet-<epoch>-<pid>-<n> is the fleet session namespace (prune kills old ones).
+    [[ "$name" =~ ^fleet-[0-9]+-[0-9]+-[0-9]+$ ]] && die "team name '$name' is reserved for fleet sessions"
+
+    # Hold the team lock from the liveness check until the session exists, so a
+    # concurrent prune can't delete this team's state in between. The EXIT trap
+    # releases it on every die path below.
+    quintet_lock "$name" || die "team start: team '$name' is locked by another quintet process (start or prune in progress)"
+    local unlock_cmd; unlock_cmd="quintet_unlock $(printf '%q' "$name")"
+    # shellcheck disable=SC2064  # expand name now
+    trap "$unlock_cmd" EXIT
+    # shellcheck disable=SC2064
+    trap "$unlock_cmd; exit 130" INT TERM
 
     if quintet_session_exists "$name"; then
         die "team '$name' already running. Use: quintet team status $name (or shutdown $name --force)"
@@ -172,9 +184,9 @@ quintet_team_start() {
     envdir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-env.XXXXXX")" || die "team start: cannot create env dir"
     chmod 700 "$envdir"
     # shellcheck disable=SC2064  # expand envdir now; the local is gone at EXIT
-    trap "rm -rf -- $(printf '%q' "$envdir")" EXIT
+    trap "rm -rf -- $(printf '%q' "$envdir"); $unlock_cmd" EXIT
     # shellcheck disable=SC2064
-    trap "rm -rf -- $(printf '%q' "$envdir"); exit 130" INT TERM
+    trap "rm -rf -- $(printf '%q' "$envdir"); $unlock_cmd; exit 130" INT TERM
     quintet_session_create "$name" "$cwd"
 
     local worker_entry provider rem role model effort mcp_eff worker_name wtask role_prompt
@@ -255,6 +267,7 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         sleep 0.5
     done
     rm -rf -- "$envdir"
+    quintet_unlock "$name"
     trap - EXIT INT TERM
     log INFO "team '$name' started with ${#workers[@]} worker(s). Attach: tmux attach -t $(quintet_tmux_session "$name")"
     printf "Tmux session: tmux attach -t %s\n" "$(quintet_tmux_session "$name")" >&2
