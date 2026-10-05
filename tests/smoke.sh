@@ -99,6 +99,17 @@ else
     grep -q '"no_mcp": true' "${QUINTET_STATE_DIR}/teams/${T}/team.json" 2>/dev/null && ok "manifest records no_mcp" || bad "manifest records no_mcp"
     grep -q 'role: implementer' "${QUINTET_STATE_DIR}/teams/${T}/taskboard.md" 2>/dev/null && ok "taskboard records role" || bad "taskboard records role"
     [[ -f "${QUINTET_STATE_DIR}/teams/${T}/team.json" ]] && ok "manifest written" || bad "manifest written"
+
+    # Watchdog modal detection
+    "$BIN" team send "$T" "w2-claude" "printf 'Do you trust this folder? [y/N]: '" >/dev/null 2>&1
+    sleep 1
+    status_out=$("$BIN" team status "$T" 2>&1 || true)
+    echo "$status_out" | grep -q "STALLED_MODAL: TRUST_FOLDER" && ok "team status flags modal stall" || bad "team status flags modal stall"
+
+    doctor_out=$("$BIN" team doctor "$T" 2>&1 || true)
+    echo "$doctor_out" | grep -q "STALLED on modal: TRUST_FOLDER" && ok "team doctor reports stalled modal" || bad "team doctor reports stalled modal"
+    echo "$doctor_out" | grep -q "Remediation:" && ok "team doctor gives remediation" || bad "team doctor gives remediation"
+
     "$BIN" team shutdown "$T" --force >/dev/null 2>&1 && ok "team shutdown" || bad "team shutdown"
     tmux has-session -t "quintet-$T" 2>/dev/null && bad "session cleaned" || ok "session cleaned"
     rm -f "$marker"; rm -rf "$QUINTET_STATE_DIR"

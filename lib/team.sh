@@ -227,6 +227,31 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
     echo "$name"
 }
 
+_quintet_detect_worker_modal() {
+    local team="$1" worker="$2"
+    local buf
+    buf="$(quintet_window_capture "$team" "$worker" 40 2>/dev/null || true)"
+    [[ -z "$buf" ]] && return 1
+
+    local tail_buf
+    tail_buf="$(echo "$buf" | tail -n 15)"
+
+    if echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors' >/dev/null 2>&1; then
+        echo "TRUST_FOLDER"
+        return 0
+    elif echo "$tail_buf" | grep -Ei 'allow tool call|approve.*tool|\[y/N\]|\(y/n\)|do you want to proceed|run command\?' >/dev/null 2>&1; then
+        echo "TOOL_APPROVAL"
+        return 0
+    elif echo "$tail_buf" | grep -Ei 'login required|sign in|authenticate|api key|enter token' >/dev/null 2>&1; then
+        echo "AUTH_REQUIRED"
+        return 0
+    elif echo "$tail_buf" | grep -Ei 'press enter to continue|press any key' >/dev/null 2>&1; then
+        echo "KEY_PAUSE"
+        return 0
+    fi
+    return 1
+}
+
 quintet_team_status() {
     local name="$1"; [[ -n "$name" ]] || die "team status: missing team name"
     if ! quintet_session_exists "$name"; then
@@ -238,14 +263,56 @@ quintet_team_status() {
     [[ -f "${tdir}/team.json" ]] && have_jq && \
         echo "Goal: $(jq -r '.goal' "${tdir}/team.json")"
     echo "Workers:"
-    local w
+    local w cmd modal
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
-        printf '  • %-18s running: %s\n' "$w" "$(quintet_window_command "$name" "$w")"
+        cmd="$(quintet_window_command "$name" "$w")"
+        modal="$(_quintet_detect_worker_modal "$name" "$w" || true)"
+        if [[ -n "$modal" ]]; then
+            printf '  • %-18s running: %-10s  ⚠️  STALLED_MODAL: %s\n' "$w" "${cmd:-idle}" "$modal"
+        else
+            printf '  • %-18s running: %s\n' "$w" "${cmd:-idle}"
+        fi
     done < <(quintet_window_list "$name")
     if [[ -f "${tdir}/taskboard.md" ]]; then
         echo "Taskboard tail:"
         tail -8 "${tdir}/taskboard.md" | sed 's/^/    /'
+    fi
+}
+
+quintet_team_doctor() {
+    local name="$1"; [[ -n "$name" ]] || die "team doctor: missing team name"
+    if ! quintet_session_exists "$name"; then
+        echo "❌ Team '$name' is not running (no tmux session $(quintet_tmux_session "$name"))"
+        return 1
+    fi
+
+    echo "==> Diagnosing team: $name (session: $(quintet_tmux_session "$name"))"
+    local issues=0
+    local w cmd modal
+    while IFS= read -r w; do
+        [[ -z "$w" ]] && continue
+        cmd="$(quintet_window_command "$name" "$w")"
+        modal="$(_quintet_detect_worker_modal "$name" "$w" || true)"
+        if [[ -n "$modal" ]]; then
+            issues=$((issues + 1))
+            echo "  ⚠️  Worker '$w' is STALLED on modal: $modal"
+            echo "     Active command: ${cmd:-idle}"
+            echo "     Recent pane output:"
+            quintet_window_capture "$name" "$w" 6 2>/dev/null | sed 's/^/       | /'
+            echo "     Remediation: Attach to resolve: tmux attach -t $(quintet_tmux_session "$name")"
+            echo "                  Or inject answer: quintet team send \"$name\" \"$w\" \"y\""
+        else
+            echo "  ✅ Worker '$w': operational (running: ${cmd:-idle})"
+        fi
+    done < <(quintet_window_list "$name")
+
+    if [[ $issues -eq 0 ]]; then
+        echo "==> All workers operational. No modal stalls detected."
+        return 0
+    else
+        echo "==> Total stalled workers detected: $issues"
+        return 1
     fi
 }
 

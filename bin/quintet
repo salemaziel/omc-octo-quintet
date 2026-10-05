@@ -34,6 +34,7 @@ quintet — orchestrate Claude Code, Codex, Antigravity (agy), Copilot, Qwen, an
 TEAM MODE (persistent tmux worker teams):
   quintet team <spec> "<task>" [--cwd DIR] [--name NAME] [--tasks "t1||..."] [--skip-auth-check] [--no-mcp]
   quintet team status   <name>
+  quintet team doctor   <name>
   quintet team capture  <name> [worker] [lines]
   quintet team send      <name> <worker> "<text>"
   quintet team shutdown  <name> [--force]
@@ -99,6 +100,7 @@ main() {
             local sub="${1:-}"
             case "$sub" in
                 status)   shift; quintet_team_status "$@" ;;
+                doctor)   shift; quintet_team_doctor "$@" ;;
                 capture)  shift; quintet_team_capture "$@" ;;
                 send)     shift; quintet_team_send "$@" ;;
                 shutdown) shift; quintet_team_shutdown "$@" ;;
