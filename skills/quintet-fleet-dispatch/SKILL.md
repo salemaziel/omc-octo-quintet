@@ -21,8 +21,12 @@ Fleet mode sends **one prompt** to several provider CLIs in **parallel, headless
 ```bash
 BIN="${CLAUDE_PLUGIN_ROOT}/bin/quintet"
 
+# Fleet runs in a dedicated tmux session by default (tmux attach command displayed)
 $BIN consult "Best approach to dedupe a 10M-row stream in Rust?"          # all ready providers
 $BIN consult "Is this regex catastrophic? ^(a+)+$" claude,codex            # chosen providers
+
+# Escape hatch: run directly in background subshells without tmux
+$BIN consult --no-tmux "Fast query plan question" claude,codex
 ```
 
 ```bash
@@ -30,7 +34,22 @@ $BIN debate  "Should we use gRPC or REST for this internal service?"       # 2-r
 $BIN review  "$(git diff HEAD~1)" claude,agy,copilot                      # multi-model code review
 ```
 
-`fleet` and `consult` are the same fan-out. `[providers]` defaults to `all`; pass a comma list to narrow. Output arrives under per-provider headers with a status tag:
+`fleet` and `consult` are the same fan-out. `[providers]` defaults to `all`; pass a comma list to narrow.
+
+### Tmux Execution & Live Inspection
+
+By default when `tmux` is available, fleet dispatches create a detached tmux session (`quintet-fleet-<timestamp>-...`) with dedicated windows per provider. The exact attach command is logged:
+```bash
+tmux attach -t quintet-fleet-...
+```
+Attach anytime to inspect model token generation and tool calls live. Once all providers finish or reach timeout, the session cleans up automatically and outputs are aggregated.
+
+**Escape Hatch**:
+To bypass tmux (e.g. inside CI/CD, restricted containers, or when tmux is not desired):
+- Pass `--no-tmux`: `$BIN fleet --no-tmux "<prompt>" [providers]`
+- Or set environment variable: `export QUINTET_FLEET_TMUX=false` (or `0`)
+
+Output arrives under per-provider headers with a status tag:
 
 ```text
 == claude [0:ok] ==

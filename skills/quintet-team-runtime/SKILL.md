@@ -50,7 +50,28 @@ $BIN team shutdown export-feat --force   # purge state too
 $BIN team list                           # all running quintet teams
 ```
 
-Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-agy`); use these exact names for `capture`/`send`.
+Workers are auto-named `w<idx>-<provider>-<role>` (or `w<idx>-<provider>` for stock); use these exact names for `capture`/`send`.
+
+### Subagent Worker Roles & Extended Spec Syntax
+
+Quintet supports assigning specialized subagent roles using the `N:provider:role` spec syntax:
+
+```bash
+# Explicit role assignment
+$BIN team 1:codex:implementer,1:agy:code-reviewer,1:claude:security-auditor "build auth feature"
+
+# Mix of specialized roles and stock execution
+$BIN team 1:codex:implementer,1:agy:stock "build and verify"
+```
+
+Available standard roles (view via `quintet roles`):
+- `implementer`: Direct implementation, scoped file edits, and verification.
+- `code-reviewer`: Read-only multi-axis reviews with severity-ranked findings.
+- `security-auditor`: Vulnerability detection, threat modeling, and OWASP Top 10 checks.
+- `test-engineer`: Deterministic test suites, edge cases, and failure-mode checks.
+- `debugger`: Root-cause diagnosis, logging, and minimal surgical fixes.
+- `devops-troubleshooter`: CI/CD, container, and environment failure triage.
+- `stock`: Baseline prompt without specialized role instructions.
 
 ### The team manifest
 
@@ -64,15 +85,15 @@ Workers are auto-named `w<idx>-<provider>` (e.g. `w1-codex`, `w2-agy`); use thes
   "started": "2026-05-25T04:30:00Z",
   "goal": "build the export feature",
   "workers": [
-    { "name": "w1-codex",  "provider": "codex" },
-    { "name": "w2-codex",  "provider": "codex" },
-    { "name": "w3-agy",    "provider": "agy" },
-    { "name": "w4-qwen",   "provider": "qwen" }
+    { "name": "w1-codex-implementer",  "provider": "codex", "role": "implementer" },
+    { "name": "w2-codex-test-engineer", "provider": "codex", "role": "test-engineer" },
+    { "name": "w3-agy-code-reviewer",  "provider": "agy",   "role": "code-reviewer" },
+    { "name": "w4-qwen",               "provider": "qwen",  "role": "stock" }
   ]
 }
 ```
 
-Each worker object is `{"name","provider"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to.
+Each worker object records `{"name", "provider", "role"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to (`tmux attach -t <session>`).
 
 If a session is orphaned (you lost the terminal), `team list` plus this file is enough to re-attach, capture, or shut it down cleanly.
 

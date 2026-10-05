@@ -68,22 +68,26 @@ npm install -g @opencode/cli               # opencode  (or: curl -fsSL https://o
 ## Usage
 
 ```bash
-# Team mode — persistent tmux workers
-quintet team 2:codex,1:agy,1:qwen "build the export feature" \
-    --name export --cwd ./repo \
-    --tasks "implement serializer||add tests||write docs||audit edge cases"
-quintet team status export
-quintet team capture export w1-codex 80
-quintet team send export w2-agy "focus on the v2 API"
-quintet team shutdown export --force
+# Team mode — persistent tmux workers with optional subagent roles
+quintet team 1:codex:implementer,1:agy:code-reviewer,1:claude:security-auditor "build auth feature" \
+    --name auth-feat --cwd ./repo \
+    --tasks "implement JWT auth endpoints||review logic and boundary safety||audit authz and injection vectors"
+quintet team status auth-feat
+quintet team capture auth-feat w1-codex-implementer 80
+quintet team send auth-feat w2-agy-code-reviewer "focus on session expiration"
+quintet team shutdown auth-feat --force
 
-# Fleet mode — one-shot across many models
+# Fleet mode — one-shot across many models (tmux session with live capture by default)
 quintet consult "best way to dedupe a 10M-row stream?" claude,codex,agy
 quintet debate  "gRPC or REST for this internal service?"
 quintet review  "$(git diff HEAD~1)" claude,agy,copilot
 
+# Non-tmux escape hatch
+quintet fleet --no-tmux "quick advisory prompt" codex,claude
+
 quintet doctor       # provider/tmux/jq readiness
 quintet providers    # per-provider install/auth/ready
+quintet roles        # list available subagent worker roles
 ```
 
 ### Slash commands (inside Claude Code)
@@ -92,15 +96,17 @@ quintet providers    # per-provider install/auth/ready
 
 ### Agent
 
-`quintet-conductor` — decomposes a task, picks providers, launches/monitors a team or fleet, and synthesizes results.
+`quintet-conductor` — decomposes a task, picks providers and worker roles, launches/monitors a team or fleet, and synthesizes results.
 
 ## Configuration (env vars)
 
 | Var | Purpose | Default |
 | --- | --- | --- |
-| `QUINTET_TIMEOUT` | global one-shot timeout (s) | 120 |
-| `QUINTET_<P>_TIMEOUT` | per-provider one-shot timeout | 90–120 |
+| `QUINTET_TIMEOUT` | global one-shot timeout (s) | 240 |
+| `QUINTET_FLEET_TMUX` | run fleet dispatches in tmux | `true` (when tmux is available) |
+| `QUINTET_<P>_TIMEOUT` | per-provider one-shot timeout | 90–240 |
 | `QUINTET_<P>_LAUNCH` | interactive launch command for team workers | per provider |
+| `QUINTET_<P>_ONESHOT_CMD` | override one-shot command for testing/sandboxes | per provider |
 | `QUINTET_<P>_WARMUP` | seconds before injecting the task | 5–6 |
 | `QUINTET_STATE_DIR` | team state dir | `$PWD/.quintet` |
 | `QUINTET_HOME` | reliability/circuit-breaker state | `~/.quintet` |
@@ -115,9 +121,11 @@ bin/quintet            CLI entry point + subcommand dispatch
 lib/common.sh          logging, paths, slug/json helpers
 lib/providers.sh       provider registry: detection, auth, one-shot + interactive contracts
 lib/reliability.sh     error classification, circuit breaker, fallback
+lib/roles.sh           subagent worker roles registry and prompt injection
 lib/tmux.sh            detached-session / window / send-keys / capture helpers
-lib/team.sh            persistent tmux worker-team runtime
-lib/fleet.sh           one-shot parallel / consult / debate / review
+lib/team.sh            persistent tmux worker-team runtime (N:provider:role)
+lib/fleet.sh           one-shot parallel / consult / debate / review (tmux default)
+roles/                 specialized role prompts (implementer, reviewer, security, etc.)
 skills/                quintet-orchestration, quintet-team-runtime, quintet-fleet-dispatch
 agents/                quintet-conductor
 commands/              /quintet:{team,fleet,consult,debate,review,doctor}

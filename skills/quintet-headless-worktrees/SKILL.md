@@ -32,10 +32,30 @@ Non-interactive mode is the reliability win. Each CLI has an auto-approve flag; 
 | CLI | Headless form | Auto-approve |
 |-----|---------------|--------------|
 | codex | `codex exec -C <dir> [PROMPT or -]` | `-s workspace-write` (sandboxed) |
-| gemini | `gemini -p "<prompt>"` | `--yolo` (or `--approval-mode yolo`) |
+| agy | `agy -p "<prompt>" --dangerously-skip-permissions` | `--dangerously-skip-permissions` |
 | copilot | `copilot -p "<prompt>"` | `--allow-all` |
+| claude | `claude -p "<prompt>"` | `--permission-mode bypassPermissions` |
+| qwen | `qwen -p "<prompt>"` | `--approval-mode yolo` (with trust env vars) |
+| opencode | `opencode run --pure --auto "<prompt>"` | `--auto` |
 
-`codex exec` reads the prompt from a positional arg, from stdin via `-`, or piped. gemini/copilot take the prompt on `-p` and run in the current directory (so `cd` into the worktree, or for codex use `-C <dir>`).
+`codex exec` reads the prompt from a positional arg, from stdin via `-`, or piped. agy/claude/copilot take the prompt on `-p` and run in the current directory (so `cd` into the worktree, or for codex use `-C <dir>`).
+
+### Tmux Execution for Worktree Dispatches (Default Pattern)
+
+When dispatching parallel worktree agents, prefer launching each worker into its own window inside a dedicated detached tmux session:
+```bash
+sess="quintet-worktrees-$(date +%s)"
+tmux new-session -d -s "$sess" -c "$REPO" -n "leader"
+# Log visibility for the human user
+echo "Worktree session active: tmux attach -t $sess"
+
+# Spawn one window per worktree worker
+tmux new-window -t "$sess" -n "wt1-codex" -c "$WT1" "codex exec -C '$WT1' -s workspace-write 'Read ./.brief.txt and follow it exactly.'"
+tmux new-window -t "$sess" -n "wt2-agy" -c "$WT2" "agy -p 'Read ./.brief.txt and follow it exactly.' --dangerously-skip-permissions"
+```
+
+**Escape Hatch**:
+If `tmux` is not available or encounters errors, fall back to running direct background subshells (`cmd > wt.log 2>&1 &`).
 
 ## Primitive 2 — Worktree setup (and the symlink trap)
 
