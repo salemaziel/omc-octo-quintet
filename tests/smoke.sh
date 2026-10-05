@@ -251,7 +251,7 @@ unset QUINTET_CLAUDE_LAUNCH QUINTET_CLAUDE_WARMUP QUINTET_STATE_DIR
 rm -rf "$V"
 
 echo "── 6. tmux targeting & worker environment ──"
-W="$(mktemp -d)"; mkdir -p "$W/home" "$W/tmp" "$W/ftmp"
+W="$(mktemp -d)"; mkdir -p "$W/home/.claude" "$W/tmp" "$W/ftmp"; touch "$W/home/.claude/.credentials.json"
 export QUINTET_STATE_DIR="$W/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
 
 # A2: exact session/window targets (no tmux prefix matching).
@@ -366,7 +366,7 @@ team_x "$BIN" team shutdown "envm-$$" >/dev/null 2>&1
 # A7: fleet --model/--effort per provider; bare value only with one provider.
 fleet_x() { ( export PATH="$X/bin:$PATH" HOME="$X/home" QUINTET_HOME="$X/home/.quintet" QUINTET_TEST_STUBLOG="$X/log"
     unset QUINTET_MODEL QUINTET_EFFORT QUINTET_CLAUDE_MODEL QUINTET_CODEX_MODEL QUINTET_CLAUDE_ONESHOT_CMD QUINTET_CODEX_ONESHOT_CMD
-    mkdir -p "$X/home/.codex"; touch "$X/home/.codex/auth.json"; "$BIN" "$@" ); }
+    mkdir -p "$X/home/.codex" "$X/home/.claude"; touch "$X/home/.codex/auth.json" "$X/home/.claude/.credentials.json"; "$BIN" "$@" ); }
 out=$(fleet_x fleet --no-tmux "hi" claude,codex --model sonnet 2>&1); rc=$?
 [[ $rc -eq 1 ]] && echo "$out" | grep -q "bare --model is ambiguous" && ok "fleet bare --model with 2 providers exits 1" || bad "fleet bare --model with 2 providers exits 1"
 rm -f "$X/log/"*.argv
@@ -491,7 +491,7 @@ chmod -R u+rwx "$P" 2>/dev/null; rm -rf "$P"
 echo "── 9. fleet runtime: cleanup, deadlines, visibility ──"
 # Sandbox: fake HOME/QUINTET_HOME/TMPDIR, stub claude+codex, and a PATH with no
 # real provider CLIs (they live outside /usr/bin:/bin), so a fallback can't reach one.
-F="$(mktemp -d)"; mkdir -p "$F/bin" "$F/home/.codex" "$F/tmp" "$F/state"; touch "$F/home/.codex/auth.json"
+F="$(mktemp -d)"; mkdir -p "$F/bin" "$F/home/.codex" "$F/home/.claude" "$F/tmp" "$F/state"; touch "$F/home/.codex/auth.json" "$F/home/.claude/.credentials.json"
 printf '#!/bin/bash\n[ -n "$QUINTET_TEST_STUB_FAIL" ] && exit 1\n[ -n "$QUINTET_TEST_SLEEP" ] && sleep "$QUINTET_TEST_SLEEP"\necho "stub codex answer"\n' > "$F/bin/codex"
 printf '#!/bin/bash\necho "stub claude answer"\n' > "$F/bin/claude"; chmod +x "$F/bin/"*
 ff() { ( export PATH="$F/bin:/usr/bin:/bin" HOME="$F/home" QUINTET_HOME="$F/home/.quintet" TMPDIR="$F/tmp"
@@ -552,6 +552,104 @@ echo "$ferr" | grep -q "fleet session kept: tmux attach -t $ksess.*kill-session"
     && ok "fast-exiting team worker keeps its pane and output" || bad "fast-exiting team worker keeps its pane and output"
 QUINTET_STATE_DIR="$F/state" "$BIN" team shutdown "fastx-$$" --force >/dev/null 2>&1
 rm -rf "$F"
+
+echo "── 10. diagnostics, auth heuristics, json fallback ──"
+Z="$(mktemp -d)"; mkdir -p "$Z/home" "$Z/stub" "$Z/mac" "$Z/state" "$Z/tmp"
+REAL_TMUX="$(command -v tmux)"
+# tmux wrapper: can fail pane capture or creation of one named window; otherwise passes through.
+printf '#!/bin/bash\ncase " $* " in\n *" capture-pane "*) [ -n "$QUINTET_TEST_FAIL_CAPTURE" ] && exit 1 ;;\n *" new-window "*) [ -n "$QUINTET_TEST_FAIL_WIN" ] && case " $* " in *" -n $QUINTET_TEST_FAIL_WIN "*) exit 1 ;; esac ;;\nesac\nexec "%s" "$@"\n' "$REAL_TMUX" > "$Z/stub/tmux"
+printf '#!/bin/sh\necho Darwin\n' > "$Z/mac/uname"; chmod +x "$Z/stub/tmux" "$Z/mac/uname"
+zz() { ( export HOME="$Z/home" QUINTET_HOME="$Z/home/.quintet" QUINTET_STATE_DIR="$Z/state" TMPDIR="$Z/tmp"
+    export QUINTET_CLAUDE_WARMUP=1 QUINTET_CODEX_WARMUP=1 QUINTET_AGY_WARMUP=1 QUINTET_QWEN_WARMUP=1; "$@" ); }
+
+# C8: modal fixtures. One team, four stub workers, each printing a different screen.
+mt="diag-$$"
+zz env QUINTET_CLAUDE_LAUNCH='printf "Implemented API key validation\n"; sleep 600' \
+       QUINTET_CODEX_LAUNCH='printf "Do you trust this folder? [y/N]\n"; for i in $(seq 25); do echo; done; sleep 600' \
+       QUINTET_AGY_LAUNCH='printf "Please log in to continue\n"; sleep 600' \
+       QUINTET_QWEN_LAUNCH='printf "Enter your API key: \n"; sleep 600' \
+    "$BIN" team 1:claude,1:codex,1:agy,1:qwen "diag" --name "$mt" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+sleep 3
+dout=$(zz "$BIN" team doctor "$mt" 2>&1); drc=$?
+echo "$dout" | grep -q "Worker 'w1-claude': no recognized modal" && ! echo "$dout" | grep -q "w1-claude' is STALLED" && ok "log line 'Implemented API key validation' is not AUTH_REQUIRED (C8)" || bad "log line 'Implemented API key validation' is not AUTH_REQUIRED (C8)"
+echo "$dout" | grep -q "Worker 'w2-codex' is STALLED on modal: TRUST_FOLDER" && ok "trust prompt above 25 blank rows detected (C8)" || bad "trust prompt above 25 blank rows detected (C8)"
+echo "$dout" | grep -q "Worker 'w3-agy' is STALLED on modal: AUTH_REQUIRED" && ok "anchored 'Please log in' still detected (C8)" || bad "anchored 'Please log in' still detected (C8)"
+echo "$dout" | grep -q "Worker 'w4-qwen' is STALLED on modal: AUTH_REQUIRED" && ok "'Enter your API key' prompt detected (C8)" || bad "'Enter your API key' prompt detected (C8)"
+! echo "$dout" | grep -q "operational" && ok "doctor no longer says 'operational' (C8)" || bad "doctor no longer says 'operational' (C8)"
+[[ $drc -ne 0 ]] && ok "doctor nonzero with stalled workers" || bad "doctor nonzero with stalled workers"
+
+# C8: pane capture failure -> inspection error, nonzero (status 2 from the detector).
+dout=$(PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_CAPTURE=1 zz "$BIN" team doctor "$mt" 2>&1); drc=$?
+echo "$dout" | grep -q "inspection error" && [[ $drc -ne 0 ]] && ok "capture failure: doctor reports inspection error, nonzero (C8)" || bad "capture failure: doctor reports inspection error, nonzero (C8)"
+! echo "$dout" | grep -q "no recognized modal" && ok "capture failure is not reported as 'no recognized modal' (C8)" || bad "capture failure is not reported as 'no recognized modal' (C8)"
+dout=$(PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_CAPTURE=1 zz "$BIN" team status "$mt" 2>&1)
+echo "$dout" | grep -q "INSPECTION_ERROR" && ok "team status flags INSPECTION_ERROR (C8)" || bad "team status flags INSPECTION_ERROR (C8)"
+(source "$ROOT/lib/tmux.sh"; source "$ROOT/lib/team.sh"; PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_CAPTURE=1 _quintet_detect_worker_modal "$mt" w1-claude >/dev/null); [[ $? -eq 2 ]] && ok "detector returns status 2 on capture failure (C8)" || bad "detector returns status 2 on capture failure (C8)"
+
+# C8: manifest vs live windows: one worker window gone, one stray window added.
+ttmux kill-window -t "=quintet-$mt:=w4-qwen" 2>/dev/null
+ttmux new-window -d -t "=quintet-$mt" -n stray sleep 600 2>/dev/null
+dout=$(zz "$BIN" team doctor "$mt" 2>&1); drc=$?
+echo "$dout" | grep -q "Worker 'w4-qwen' is in team.json but has no window (missing)" && ok "manifest worker with no window reported (C8)" || bad "manifest worker with no window reported (C8)"
+echo "$dout" | grep -q "Window 'stray' is not in team.json (extra)" && ok "window outside the manifest reported (C8)" || bad "window outside the manifest reported (C8)"
+zz "$BIN" team shutdown "$mt" --force >/dev/null 2>&1
+
+# A9 / decision 6: auth heuristics with a fake HOME (existence checks only).
+ah="$Z/authhome"; mkdir -p "$ah/.claude" "$ah/.gemini"
+auth_of() { ( export HOME="$ah"; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX GEMINI_API_KEY GOOGLE_API_KEY
+    for kv in "${@:2}"; do export "$kv"; done
+    source "$ROOT/lib/common.sh"; source "$ROOT/lib/providers.sh"; quintet_provider_auth "$1" ); }
+[[ "$(auth_of claude)" == none ]] && ok "bare ~/.claude dir, no env: claude auth is none (A9)" || bad "bare ~/.claude dir, no env: claude auth is none (A9)"
+[[ "$(auth_of agy)" == none ]] && ok "bare ~/.gemini dir, no env: agy auth is none (A9)" || bad "bare ~/.gemini dir, no env: agy auth is none (A9)"
+touch "$ah/.claude/.credentials.json"; [[ "$(auth_of claude)" == oauth ]] && ok "claude .credentials.json -> oauth (A9)" || bad "claude .credentials.json -> oauth (A9)"
+rm -f "$ah/.claude/.credentials.json"
+[[ "$(auth_of claude ANTHROPIC_API_KEY=dummy)" == api-key ]] && ok "claude ANTHROPIC_API_KEY -> api-key (A9)" || bad "claude ANTHROPIC_API_KEY -> api-key (A9)"
+[[ "$(auth_of claude CLAUDE_CODE_OAUTH_TOKEN=dummy)" == api-key ]] && ok "claude CLAUDE_CODE_OAUTH_TOKEN counts as a credential (A9)" || bad "claude CLAUDE_CODE_OAUTH_TOKEN counts as a credential (A9)"
+[[ "$(auth_of claude CLAUDE_CODE_USE_BEDROCK=1)" != none ]] && ok "claude Bedrock enabled is not none (A9)" || bad "claude Bedrock enabled is not none (A9)"
+[[ "$(auth_of claude CLAUDE_CODE_USE_BEDROCK=0)" == none ]] && ok "claude Bedrock=0 does not count (A9)" || bad "claude Bedrock=0 does not count (A9)"
+[[ "$(PATH="$Z/mac:$PATH" auth_of claude)" == unknown ]] && ok "claude on macOS (keychain) is unknown, not none (A9)" || bad "claude on macOS (keychain) is unknown, not none (A9)"
+[[ "$(auth_of agy GEMINI_API_KEY=dummy)" == api-key ]] && ok "agy GEMINI_API_KEY -> api-key (A9)" || bad "agy GEMINI_API_KEY -> api-key (A9)"
+touch "$ah/.gemini/oauth_creds.json"; [[ "$(auth_of agy)" == oauth ]] && ok "agy oauth_creds.json -> oauth (A9)" || bad "agy oauth_creds.json -> oauth (A9)"
+rm -f "$ah/.gemini/oauth_creds.json"; mkdir -p "$ah/.gemini/antigravity-cli"; touch "$ah/.gemini/antigravity-cli/antigravity-oauth-token"
+[[ "$(auth_of agy)" == oauth ]] && ok "agy antigravity-oauth-token -> oauth (A9)" || bad "agy antigravity-oauth-token -> oauth (A9)"
+rm -f "$ah/.gemini/antigravity-cli/antigravity-oauth-token"
+dout=$(PATH="$Z/mac:$PATH" HOME="$ah" "$BIN" doctor 2>/dev/null)
+echo "$dout" | grep -E '^.{1,4} claude ' | grep -q "unverified" && ok "doctor shows unknown auth as 'unverified' (A9)" || bad "doctor shows unknown auth as 'unverified' (A9)"
+printf '#!/bin/sh\nexit 0\n' > "$Z/stub/claude"; chmod +x "$Z/stub/claude"
+out=$(env -u QUINTET_CLAUDE_LAUNCH -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" "$BIN" team 1:claude "t" --name "pf-$$" --cwd /tmp 2>&1); rc=$?
+[[ $rc -ne 0 ]] && echo "$out" | grep -q "not ready/authenticated" && ok "pre-flight rejects claude with no credentials (A9)" || bad "pre-flight rejects claude with no credentials (A9)"
+printf '#!/bin/sh\nexit 0\n' > "$Z/stub/agy"; chmod +x "$Z/stub/agy"
+PATH="$Z/stub:$PATH" HOME="$ah" QUINTET_STATE_DIR="$Z/state" QUINTET_GEMINI_LAUNCH='bash --norc' QUINTET_AGY_WARMUP=1 "$BIN" team 1:agy "t" --name "gl-$$" --cwd /tmp >/dev/null 2>&1
+ttmux has-session -t "=quintet-gl-$$" 2>/dev/null && ok "pre-flight honors QUINTET_GEMINI_LAUNCH (A9)" || bad "pre-flight honors QUINTET_GEMINI_LAUNCH (A9)"
+QUINTET_STATE_DIR="$Z/state" "$BIN" team shutdown "gl-$$" --force >/dev/null 2>&1
+
+# A14: a worker that fails to spawn keeps its index; later workers keep their numbers and subtasks.
+sout=$(PATH="$Z/stub:$PATH" QUINTET_TEST_FAIL_WIN=w1-claude zz env QUINTET_CLAUDE_LAUNCH='bash --norc' "$BIN" team 2:claude "shared goal" --name "sf-$$" --skip-auth-check --cwd /tmp --tasks "subtask-one||subtask-two" 2>&1)
+sm="$Z/state/teams/sf-$$"
+[[ "$(jq -r '.workers[].name' "$sm/team.json" 2>/dev/null)" == "w2-claude" ]] && ok "spawn failure on worker 1: survivor is named w2-claude (A14)" || bad "spawn failure on worker 1: survivor is named w2-claude (A14)"
+grep -q 'w2-claude.*subtask-two' "$sm/taskboard.md" && ! grep -q 'subtask-one' "$sm/taskboard.md" && ok "survivor gets subtask 2, not subtask 1 (A14)" || bad "survivor gets subtask 2, not subtask 1 (A14)"
+echo "$sout" | grep -q "started with 1 of 2 worker" && ok "final count excludes the failed worker (A14)" || bad "final count excludes the failed worker (A14)"
+zz "$BIN" team shutdown "sf-$$" --force >/dev/null 2>&1
+
+# M6: json_escape without jq must produce valid JSON for CR and other C0 controls.
+je_ok=true
+for t in $'a\rb' $'x\x01y\x1fz\b\f' $'t\tn\n"q"\\'; do
+    ( source "$ROOT/lib/common.sh"; have_jq() { return 1; }; json_escape "$t" ) | python3 -m json.tool >/dev/null 2>&1 || je_ok=false
+done
+$je_ok && ok "json_escape fallback (no jq) emits valid JSON for \\r and C0 controls (M6)" || bad "json_escape fallback (no jq) emits valid JSON for \\r and C0 controls (M6)"
+[[ "$( ( source "$ROOT/lib/common.sh"; have_jq() { return 1; }; json_escape $'a\rb' ) | python3 -c 'import sys,json;print(json.load(sys.stdin)=="a\rb")' )" == True ]] && ok "json_escape fallback round-trips \\r (M6)" || bad "json_escape fallback round-trips \\r (M6)"
+
+# Usage text lists the Phase 6 flags.
+uo=$("$BIN" help 2>&1); uok=true
+for f in --safe --model --effort --no-mcp --tasks --skip-auth-check provider=value --days --dry-run; do echo "$uo" | grep -qF -- "$f" || uok=false; done
+$uok && ok "usage lists --safe/--model/--effort/--no-mcp/--tasks/--skip-auth-check/provider=value/prune flags" || bad "usage lists the team/fleet/prune flags"
+echo "$uo" | grep -q "deprecated" && ok "usage notes prune --force is deprecated" || bad "usage notes prune --force is deprecated"
+
+# shellcheck stays clean (when installed).
+if command -v shellcheck >/dev/null 2>&1; then
+    [[ -z "$(shellcheck -S warning "$BIN" "$ROOT"/lib/*.sh 2>&1)" ]] && ok "shellcheck -S warning: zero findings" || bad "shellcheck -S warning: zero findings"
+fi
+rm -rf "$Z"
 
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"

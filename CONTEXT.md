@@ -33,3 +33,12 @@ Quintet is the unified multi-agent orchestrator plugin and CLI for AI coding age
 | `copilot` | 🟢 | `copilot` | Independent second perspective |
 | `qwen` | 🔵 | `qwen` | High-volume free OAuth bulk tasks |
 | `opencode` | 🟧 | `opencode` | Multi-model routing, open-source models, independent checks |
+
+## Operational Notes
+
+- `--safe` team workers block on approval prompts; answer them with `quintet team send <name> <worker> "<text>"`. No escalation path exists yet (it is a feature, not implemented).
+- Worker targeting is exact-name only (`w1-claude`); the `w1` shorthand is gone.
+- `--no-mcp` is partial for copilot (built-in servers only); agy/qwen/opencode have no MCP-off flag. `team.json` records `no_mcp_effective`.
+- Team windows stay open as dead panes after the CLI exits (`remain-on-exit`) until `team shutdown`.
+- `quintet team doctor` reports status 2 ("inspection error") when a pane can't be captured, and compares windows with `team.json` (missing/extra).
+- Auth detection is a heuristic; `unknown` is shown as `unverified`.

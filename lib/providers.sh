@@ -118,8 +118,16 @@ quintet_write_worker_env() {
     )
 }
 
-# Report the auth method in use (best-effort, never blocks).
-# Echoes a short token: oauth | api-key | gh-cli | keychain | none | unknown
+# _quintet_env_enabled <VAR> — true when VAR is set to something other than
+# empty/0/false (tests presence/truthiness only; the value is never printed).
+_quintet_env_enabled() {
+    local v="${!1:-}"
+    [[ -n "$v" && "$v" != "0" && "${v,,}" != "false" ]]
+}
+
+# Report the auth method in use (best-effort, never blocks; a heuristic, not a
+# login check). Echoes: oauth | api-key | cloud | gh-cli | keychain | none | unknown
+# (`unknown` = could not tell; doctor shows it as "unverified").
 # Credential env var names come from quintet_provider_env_vars --auth.
 quintet_provider_auth() {
     local v env_hit=""
@@ -128,18 +136,22 @@ quintet_provider_auth() {
     done < <(quintet_provider_env_vars "$1" --auth)
     case "$1" in
         claude)
-            # Claude Code: subscription/OAuth in ~/.claude or an API key/token env var.
+            # Heuristic: only `none` when no credential source is visible. On macOS
+            # the credentials live in the keychain, which isn't inspected: unknown.
+            # Existence checks only; no values are read.
             if [[ -n "$env_hit" ]]; then echo "api-key";
-            elif [[ -f "${HOME}/.claude/.credentials.json" || -d "${HOME}/.claude" ]]; then echo "oauth";
-            else echo "unknown"; fi ;;
+            elif [[ -f "${HOME}/.claude/.credentials.json" ]]; then echo "oauth";
+            elif _quintet_env_enabled CLAUDE_CODE_USE_BEDROCK || _quintet_env_enabled CLAUDE_CODE_USE_VERTEX; then echo "cloud";
+            elif [[ "$(uname -s)" == "Darwin" ]]; then echo "unknown";
+            else echo "none"; fi ;;
         codex)
             if [[ -f "${HOME}/.codex/auth.json" ]]; then echo "oauth";
             elif [[ -n "$env_hit" ]]; then echo "api-key";
             else echo "none"; fi ;;
         agy|gemini)
             if [[ -n "$env_hit" ]]; then echo "api-key";
-            elif [[ -f "${HOME}/.gemini/oauth_creds.json" || -f "${HOME}/.gemini/google_accounts.json" || -d "${HOME}/.gemini/antigravity-cli" || -d "${HOME}/.gemini" ]]; then echo "oauth";
-            else echo "unknown"; fi ;;
+            elif [[ -f "${HOME}/.gemini/antigravity-cli/antigravity-oauth-token" || -f "${HOME}/.gemini/oauth_creds.json" ]]; then echo "oauth";
+            else echo "none"; fi ;;
         copilot)
             if [[ -n "$env_hit" ]]; then echo "env:${env_hit}";
             elif [[ -f "${HOME}/.copilot/config.json" ]]; then echo "keychain";

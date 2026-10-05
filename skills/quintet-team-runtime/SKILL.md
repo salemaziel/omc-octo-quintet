@@ -52,7 +52,7 @@ $BIN team list                           # all running quintet teams
 $BIN prune --days 7                      # garbage-collect dead teams & aged debate logs
 ```
 
-Workers are auto-named `w<idx>-<provider>-<role>` (or `w<idx>-<provider>` for stock); use these exact names for `capture`/`send`.
+Workers are auto-named `w<idx>-<provider>-<role>` (or `w<idx>-<provider>` for stock); use these exact names for `capture`/`send`. Names are matched exactly: the old `w1` shorthand no longer works (see `team status <name>`).
 
 ### Subagent Worker Roles, Models & Extended Spec Syntax
 
@@ -79,7 +79,7 @@ Available standard roles (view via `quintet roles`):
 
 ### Pre-flight Auth Checks & Readiness Gates
 
-Before creating any tmux sessions or panes, `quintet team` validates that every provider in the spec is installed and authenticated via `quintet_provider_ready`. If any provider is unready (missing CLI binary or `none` auth), startup halts immediately with diagnostic guidance (`quintet doctor`), preventing deadlocked workers.
+Before creating any tmux sessions or panes, `quintet team` validates that every provider in the spec is installed and authenticated via `quintet_provider_ready`. If any provider is unready (missing CLI binary or `none` auth), startup halts immediately with diagnostic guidance (`quintet doctor`), preventing deadlocked workers. Auth detection is a **heuristic** (file and env-var presence only, values are never read): claude is `none` only with no `~/.claude/.credentials.json`, no `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN`, no Bedrock/Vertex env, and not on macOS (keychain); agy is `none` without `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.gemini/oauth_creds.json`, `GEMINI_API_KEY` or `GOOGLE_API_KEY`. `quintet doctor` shows an undeterminable result as `unverified`. A custom `QUINTET_<P>_LAUNCH` (or the legacy `QUINTET_GEMINI_LAUNCH` for agy) skips the check for that provider.
 
 **Bypass**: Pass `--skip-auth-check` or set `export QUINTET_SKIP_AUTH_CHECK=true` to skip pre-flight gates (e.g. in test harnesses or custom shell stand-in workers).
 
@@ -92,11 +92,11 @@ To prevent worker agents from loading extraneous host or global MCP servers that
   ```
 - Or set `export QUINTET_NO_MCP=true` to disable MCP across all workers by default.
 
-This maps automatically to provider isolation flags (`--strict-mcp-config` for Claude, `-c mcp_servers={}` for Codex, `--disable-builtin-mcps` for Copilot, `--pure` for OpenCode).
+This maps to provider isolation flags (`--strict-mcp-config` for Claude, `-c mcp_servers={}` for Codex). It is **partial** for Copilot (`--disable-builtin-mcps` only: user, workspace and plugin MCP servers stay on) and unavailable for agy, qwen and OpenCode; quintet logs a WARN and records `no_mcp_effective` per worker in `team.json`.
 
 ### Tiered Permission & Safety Mode (`--safe`)
 
-By default, team workers launch with unattended autonomy flags (`--permission-mode bypassPermissions` for Claude, `--yolo` for Codex, `--dangerously-skip-permissions` for Agy, `--allow-all-tools` for Copilot, `--approval-mode yolo` for Qwen, `--auto` for OpenCode).
+By default, team workers launch with unattended autonomy flags (`--permission-mode bypassPermissions` for Claude, `--yolo` for Codex, `--dangerously-skip-permissions` for Agy, `--allow-all` for Copilot, `--approval-mode yolo` for Qwen, `--auto` for OpenCode).
 
 For sensitive repositories, production checkouts, or when confirmation dialogs are preferred:
 - Pass `--safe` to `quintet team`:
@@ -105,7 +105,14 @@ For sensitive repositories, production checkouts, or when confirmation dialogs a
   ```
 - Or set `export QUINTET_SAFE_MODE=true`.
 
-When running in safe mode, run `quintet team doctor <name>` to scan worker panes for any stalled confirmation modals or interactive prompts.
+In safe mode, workers **block on approval prompts** (tool approval, trust-folder). Run `quintet team doctor <name>` to find stalled workers, then answer with `team send`:
+```bash
+$BIN team doctor export-feat
+$BIN team send export-feat w1-codex "y"
+```
+There is no escalation path yet: nothing pauses a worker and asks the orchestrator, so someone has to poll `doctor`. Doctor exits nonzero when a pane can't be captured (inspection error) or when `team.json` and the live windows disagree (missing or extra worker). "No recognized modal" means only that none of the known prompt patterns matched.
+
+Team windows stay open as dead panes after a worker's CLI exits (`remain-on-exit`), so output can be read with `team capture`; `team shutdown` removes them.
 
 ### State Retention & Garbage Collection (`quintet prune`)
 
@@ -144,7 +151,7 @@ $BIN prune [--days N] [--dry-run]
 }
 ```
 
-Each worker object records `{"name", "provider", "role", "model"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to (`tmux attach -t <session>`).
+Each worker object records `{"name", "provider", "role", "model", "effort", "no_mcp_effective"}`; the per-worker subtask is recorded in the taskboard (`taskboard.md`), not the manifest. The `session` field is the tmux session to attach to (`tmux attach -t <session>`).
 
 If a session is orphaned (you lost the terminal), `team list` plus this file is enough to re-attach, capture, or shut it down cleanly.
 

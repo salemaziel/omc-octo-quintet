@@ -124,7 +124,9 @@ quintet_team_start() {
         for w_entry in "${workers[@]}"; do
             w_prov="${w_entry%%:*}"
             custom_launch_var="QUINTET_$(printf '%s' "$w_prov" | tr '[:lower:]' '[:upper:]')_LAUNCH"
-            if [[ -z "${!custom_launch_var:-}" ]]; then
+            local legacy_launch=""
+            [[ "$w_prov" == "agy" ]] && legacy_launch="${QUINTET_GEMINI_LAUNCH:-}"   # legacy name launch_cmd still honors
+            if [[ -z "${!custom_launch_var:-}" && -z "$legacy_launch" ]]; then
                 if ! quintet_provider_ready "$w_prov"; then
                     die "team start: provider '$w_prov' is not ready/authenticated. Run: quintet doctor (or pass --skip-auth-check)"
                 fi
@@ -177,7 +179,7 @@ quintet_team_start() {
 
     # Build manifest header.
     local manifest="${tdir}/team.json"
-    local worker_json="" idx=1
+    local worker_json="" idx=1 started=0
     # Per-worker env files (A4): 0600 files in a private 0700 dir; each worker
     # deletes its own before exec. The trap removes leftovers on abort.
     local envdir
@@ -236,7 +238,8 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
         local envf="${envdir}/${worker_name}.env"
         quintet_write_worker_env "$provider" "$envf" || die "team start: cannot write worker env file"
-        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$effort" "$safe_mode")" "$envf" || continue
+        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$effort" "$safe_mode")" "$envf" || { log ERROR "worker $worker_name failed to start; skipping it (later workers keep their numbers)"; idx=$((idx+1)); continue; }
+        started=$((started+1))
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
         worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}"), \"effort\": $(json_escape "${effort:-default}"), \"no_mcp_effective\": $(json_escape "$mcp_eff")}"
 
@@ -269,19 +272,25 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
     rm -rf -- "$envdir"
     quintet_unlock "$name"
     trap - EXIT INT TERM
-    log INFO "team '$name' started with ${#workers[@]} worker(s). Attach: tmux attach -t $(quintet_tmux_session "$name")"
+    log INFO "team '$name' started with ${started} of ${#workers[@]} worker(s). Attach: tmux attach -t $(quintet_tmux_session "$name")"
     printf "Tmux session: tmux attach -t %s\n" "$(quintet_tmux_session "$name")" >&2
     echo "$name"
 }
 
+# _quintet_detect_worker_modal <team> <worker>
+# Status: 0 = modal found (name on stdout), 1 = no recognized modal, 2 = the pane
+# could not be captured (inspection error). Whitespace-only lines are dropped
+# before taking the last 15, so a prompt scrolled above blank rows is still seen.
+# Auth patterns are anchored to prompt shapes (POSIX classes only, no \s) so a
+# log line like "Implemented API key validation" doesn't match.
 _quintet_detect_worker_modal() {
     local team="$1" worker="$2"
     local buf
-    buf="$(quintet_window_capture "$team" "$worker" 40 2>/dev/null || true)"
-    [[ -z "$buf" ]] && return 1
+    buf="$(quintet_window_capture "$team" "$worker" 40 2>/dev/null)" || return 2
 
     local tail_buf
-    tail_buf="$(echo "$buf" | tail -n 15)"
+    tail_buf="$(printf '%s\n' "$buf" | grep -v '^[[:space:]]*$' | tail -n 15)"
+    [[ -z "$tail_buf" ]] && return 1
 
     if echo "$tail_buf" | grep -Ei 'do you trust this folder|trust folder|trust the authors' >/dev/null 2>&1; then
         echo "TRUST_FOLDER"
@@ -289,7 +298,7 @@ _quintet_detect_worker_modal() {
     elif echo "$tail_buf" | grep -Ei 'allow tool call|approve.*tool|\[y/N\]|\(y/n\)|do you want to proceed|run command\?' >/dev/null 2>&1; then
         echo "TOOL_APPROVAL"
         return 0
-    elif echo "$tail_buf" | grep -Ei 'login required|sign in|authenticate|api key|enter token' >/dev/null 2>&1; then
+    elif echo "$tail_buf" | grep -Ei -e '^[[:space:]]*(Please )?(log ?in|sign in)' -e 'Enter (your )?(API key|token)' -e '^[[:space:]]*(login|authentication) required' >/dev/null 2>&1; then
         echo "AUTH_REQUIRED"
         return 0
     elif echo "$tail_buf" | grep -Ei 'press enter to continue|press any key' >/dev/null 2>&1; then
@@ -297,6 +306,14 @@ _quintet_detect_worker_modal() {
         return 0
     fi
     return 1
+}
+
+# _quintet_manifest_workers <team> — worker names from team.json, one per line.
+# Returns 1 when there is no manifest or no jq to read it (caller skips the check).
+_quintet_manifest_workers() {
+    local f; f="$(_quintet_team_dir "$1")/team.json"
+    [[ -f "$f" ]] && have_jq || return 1
+    jq -r '.workers[].name' "$f" 2>/dev/null
 }
 
 quintet_team_status() {
@@ -311,12 +328,14 @@ quintet_team_status() {
     [[ -f "${tdir}/team.json" ]] && have_jq && \
         echo "Goal: $(jq -r '.goal' "${tdir}/team.json")"
     echo "Workers:"
-    local w cmd modal
+    local w cmd modal rc
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
         cmd="$(quintet_window_command "$name" "$w")"
-        modal="$(_quintet_detect_worker_modal "$name" "$w" || true)"
-        if [[ -n "$modal" ]]; then
+        modal="$(_quintet_detect_worker_modal "$name" "$w")"; rc=$?
+        if [[ $rc -eq 2 ]]; then
+            printf '  • %-18s running: %-10s  ⚠️  INSPECTION_ERROR: pane capture failed\n' "$w" "${cmd:-idle}"
+        elif [[ $rc -eq 0 && -n "$modal" ]]; then
             printf '  • %-18s running: %-10s  ⚠️  STALLED_MODAL: %s\n' "$w" "${cmd:-idle}" "$modal"
         else
             printf '  • %-18s running: %s\n' "$w" "${cmd:-idle}"
@@ -338,12 +357,17 @@ quintet_team_doctor() {
 
     echo "==> Diagnosing team: $name (session: $(quintet_tmux_session "$name"))"
     local issues=0
-    local w cmd modal
+    local w cmd modal rc
+    local -a windows=()
     while IFS= read -r w; do
         [[ -z "$w" ]] && continue
+        windows+=( "$w" )
         cmd="$(quintet_window_command "$name" "$w")"
-        modal="$(_quintet_detect_worker_modal "$name" "$w" || true)"
-        if [[ -n "$modal" ]]; then
+        modal="$(_quintet_detect_worker_modal "$name" "$w")"; rc=$?
+        if [[ $rc -eq 2 ]]; then
+            issues=$((issues + 1))
+            echo "  ⚠️  Worker '$w': inspection error (pane capture failed; running: ${cmd:-idle})"
+        elif [[ $rc -eq 0 && -n "$modal" ]]; then
             issues=$((issues + 1))
             echo "  ⚠️  Worker '$w' is STALLED on modal: $modal"
             echo "     Active command: ${cmd:-idle}"
@@ -352,15 +376,31 @@ quintet_team_doctor() {
             echo "     Remediation: Attach to resolve: tmux attach -t $(quintet_tmux_session "$name")"
             echo "                  Or inject answer: quintet team send \"$name\" \"$w\" \"y\""
         else
-            echo "  ✅ Worker '$w': operational (running: ${cmd:-idle})"
+            echo "  ✅ Worker '$w': no recognized modal (running: ${cmd:-idle})"
         fi
     done < <(quintet_window_list "$name")
 
+    # Compare live windows with the manifest: report workers that vanished or
+    # appeared outside quintet.
+    local expected
+    if expected="$(_quintet_manifest_workers "$name")"; then
+        local e
+        while IFS= read -r e; do
+            [[ -z "$e" ]] && continue
+            printf '%s\n' "${windows[@]}" | grep -Fxq -- "$e" || { issues=$((issues + 1)); echo "  ❌ Worker '$e' is in team.json but has no window (missing)"; }
+        done <<< "$expected"
+        for w in "${windows[@]}"; do
+            printf '%s\n' "$expected" | grep -Fxq -- "$w" || { issues=$((issues + 1)); echo "  ⚠️  Window '$w' is not in team.json (extra)"; }
+        done
+    else
+        echo "  (manifest check skipped: no team.json or jq)"
+    fi
+
     if [[ $issues -eq 0 ]]; then
-        echo "==> All workers operational. No modal stalls detected."
+        echo "==> No recognized modal stalls and workers match the manifest (heuristic: unknown prompts are not detected)."
         return 0
     else
-        echo "==> Total stalled workers detected: $issues"
+        echo "==> Total issues detected: $issues"
         return 1
     fi
 }

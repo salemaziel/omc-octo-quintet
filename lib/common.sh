@@ -113,8 +113,16 @@ json_escape() {
     if have_jq; then
         printf '%s' "$1" | jq -Rs .
     else
-        local s="$1"
+        local s="$1" i c e
         s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/\\n}"; s="${s//$'\t'/\\t}"
+        s="${s//$'\r'/\\r}"; s="${s//$'\b'/\\b}"; s="${s//$'\f'/\\f}"
+        # Remaining C0 controls (1-31; NUL can't be in a bash string) -> \u00XX.
+        for i in {1..31}; do
+            printf -v c "\\$(printf '%03o' "$i")"
+            [[ "$s" == *"$c"* ]] || continue
+            printf -v e '\\u%04x' "$i"
+            s="${s//"$c"/$e}"
+        done
         printf '"%s"' "$s"
     fi
 }

@@ -1,6 +1,6 @@
 ---
 name: quintet-headless-worktrees
-description: Orchestrate multiple coding-agent CLIs (codex/gemini/copilot/claude) headlessly — each in its own git worktree, driven non-interactively, then merged. Use when fanning real implementation or review work out to several model CLIs in parallel without a tmux REPL, when you need worktree isolation so agents don't collide, or when distributing token cost onto external providers. Trigger on "run codex/gemini/copilot in parallel", "headless multi-agent", "git worktree per agent", "non-interactive CLI agents", "offload work to other model CLIs", "parallel build with isolated worktrees". For interactive tmux worker teams use quintet-team-runtime instead; for one-shot opinions use quintet-fleet-dispatch.
+description: Orchestrate multiple coding-agent CLIs (codex/gemini/copilot/claude) headlessly — each in its own git worktree, driven non-interactively (one-shot, not interactive REPLs; each worker runs in a tmux window by default so its output stays visible), then merged. Use when fanning real implementation or review work out to several model CLIs in parallel without driving interactive REPLs, when you need worktree isolation so agents don't collide, or when distributing token cost onto external providers. Trigger on "run codex/gemini/copilot in parallel", "headless multi-agent", "git worktree per agent", "non-interactive CLI agents", "offload work to other model CLIs", "parallel build with isolated worktrees". For interactive tmux worker teams use quintet-team-runtime instead; for one-shot opinions use quintet-fleet-dispatch.
 ---
 
 # Quintet Headless Worktrees
@@ -42,20 +42,29 @@ Non-interactive mode is the reliability win. Each CLI has an auto-approve flag; 
 
 ### Tmux Execution for Worktree Dispatches (Default Pattern)
 
-When dispatching parallel worktree agents, prefer launching each worker into its own window inside a dedicated detached tmux session:
+When dispatching parallel worktree agents, launch each worker into its own window inside a dedicated detached tmux session. Set `remain-on-exit on` so a finished or crashed worker keeps its pane, and `tee` the output to a log in the worktree so it survives:
 ```bash
 sess="quintet-worktrees-$(date +%s)"
 tmux new-session -d -s "$sess" -c "$REPO" -n "leader"
+tmux set-option -w -t "=$sess:=leader" remain-on-exit on
 # Log visibility for the human user
 echo "Worktree session active: tmux attach -t $sess"
 
-# Spawn one window per worktree worker
-tmux new-window -t "$sess" -n "wt1-codex" -c "$WT1" "codex exec -C '$WT1' -s workspace-write 'Read ./.brief.txt and follow it exactly.'"
-tmux new-window -t "$sess" -n "wt2-agy" -c "$WT2" "agy -p 'Read ./.brief.txt and follow it exactly.' --dangerously-skip-permissions"
+# One window per worktree worker (exact targets: "=session")
+tmux new-window -t "=$sess" -n "wt1-codex" -c "$WT1" \
+  "codex exec -C '$WT1' -s workspace-write 'Read ./.brief.txt and follow it exactly.' 2>&1 | tee '$WT1/.agent.log'"
+tmux set-option -w -t "=$sess:=wt1-codex" remain-on-exit on
+tmux new-window -t "=$sess" -n "wt2-agy" -c "$WT2" \
+  "agy -p 'Read ./.brief.txt and follow it exactly.' --dangerously-skip-permissions 2>&1 | tee '$WT2/.agent.log'"
+tmux set-option -w -t "=$sess:=wt2-agy" remain-on-exit on
 ```
+Add `.agent.log` and `.brief.txt` to the repo's `.git/info/exclude`. `remain-on-exit` is set right after the window is created, so a worker that dies within milliseconds can still lose its pane. For a hard guarantee, create the window on `sleep 86400`, set the option, then `tmux respawn-pane -k -t "=$sess:=wt1-codex" "<command>"` (this is what `quintet team` does).
 
-**Escape Hatch**:
-If `tmux` is not available or encounters errors, fall back to running direct background subshells (`cmd > wt.log 2>&1 &`).
+**No-tmux fallback**: if `tmux` is missing or errors, run each worker as a background subshell with its output captured:
+```bash
+( cd "$WT1" && codex exec -C "$WT1" -s workspace-write 'Read ./.brief.txt and follow it exactly.' ) > "$WT1/.agent.log" 2>&1 &
+```
+Then `wait` and read each `.agent.log`.
 
 ## Primitive 2 — Worktree setup (and the symlink trap)
 

@@ -284,9 +284,8 @@ _quintet_fan_out() {
         provider_arg="${provider_arg//--no-mcp/}"
     fi
 
-    local safe_mode="${QUINTET_SAFE_MODE:-false}"
+    # --safe reaches launch/one-shot builders through QUINTET_SAFE_MODE.
     if [[ "$provider_arg" == *--safe* ]]; then
-        safe_mode=true
         export QUINTET_SAFE_MODE=true
         provider_arg="${provider_arg//--safe/}"
     fi
@@ -377,7 +376,7 @@ _quintet_render_dir() {
 }
 
 quintet_fleet_parallel() {
-    local prompt="" providers=""
+    local prompt="" prov_arg=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
@@ -391,27 +390,27 @@ quintet_fleet_parallel() {
             *)
                 if [[ -z "$prompt" ]]; then
                     prompt="$1"
-                elif [[ -z "$providers" ]]; then
-                    providers="$1"
+                elif [[ -z "$prov_arg" ]]; then
+                    prov_arg="$1"
                 fi
                 shift ;;
         esac
     done
-    [[ -n "$providers" ]] || providers="all"
+    [[ -n "$prov_arg" ]] || prov_arg="all"
     [[ -n "$prompt" ]] || die "fleet: missing prompt"
     local -a plist=()
-    _quintet_resolve_providers plist "$providers"
+    _quintet_resolve_providers plist "$prov_arg"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet: no ready providers (run: quintet doctor)"
-    _quintet_bind_bare_cli "$providers" "${plist[@]}"
+    _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
     local rundir
-    rundir="$(_quintet_fan_out "$prompt" "$providers" "${plist[@]}")" || return 1
+    rundir="$(_quintet_fan_out "$prompt" "$prov_arg" "${plist[@]}")" || return 1
     [[ -d "$rundir" ]] || return 1
     _quintet_render_dir "$rundir"
     rm -rf "$rundir" 2>/dev/null || true
 }
 
 quintet_fleet_review() {
-    local target="" providers=""
+    local target="" prov_arg=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
@@ -425,19 +424,19 @@ quintet_fleet_review() {
             *)
                 if [[ -z "$target" ]]; then
                     target="$1"
-                elif [[ -z "$providers" ]]; then
-                    providers="$1"
+                elif [[ -z "$prov_arg" ]]; then
+                    prov_arg="$1"
                 fi
                 shift ;;
         esac
     done
-    [[ -n "$providers" ]] || providers="all"
+    [[ -n "$prov_arg" ]] || prov_arg="all"
     [[ -n "$target" ]] || die "fleet review: missing target (a diff, file path, or description)"
     local prompt
     prompt="You are performing a focused code review. Identify correctness bugs, security issues, and risky patterns. Be specific (file:line where possible) and rank findings by severity. Do not restate the code. Review target:
 
 ${target}"
-    quintet_fleet_parallel "$prompt" "$providers"
+    quintet_fleet_parallel "$prompt" "$prov_arg"
 }
 
 # Two-round debate: independent answers, then cross-critique + refined position.
@@ -445,7 +444,7 @@ ${target}"
 # is persisted under $QUINTET_HOME/debates/<ts>/ so the raw arguments survive — not
 # just whatever the orchestrator chooses to summarize.
 quintet_fleet_debate() {
-    local question="" providers=""
+    local question="" prov_arg=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-tmux) export QUINTET_FLEET_TMUX=false; shift ;;
@@ -459,13 +458,13 @@ quintet_fleet_debate() {
             *)
                 if [[ -z "$question" ]]; then
                     question="$1"
-                elif [[ -z "$providers" ]]; then
-                    providers="$1"
+                elif [[ -z "$prov_arg" ]]; then
+                    prov_arg="$1"
                 fi
                 shift ;;
         esac
     done
-    [[ -n "$providers" ]] || providers="all"
+    [[ -n "$prov_arg" ]] || prov_arg="all"
     [[ -n "$question" ]] || die "fleet debate: missing question"
 
     # Seconds-resolution ts alone can collide if two debates start in the same
@@ -477,13 +476,13 @@ quintet_fleet_debate() {
     archive="$(mktemp -d "${base}/${ts}.XXXXXX")" || die "fleet debate: cannot create transcript dir under ${base}"
 
     local -a plist=()
-    _quintet_resolve_providers plist "$providers"
+    _quintet_resolve_providers plist "$prov_arg"
     [[ "${#plist[@]}" -ge 1 ]] || die "fleet debate: no ready providers (run: quintet doctor)"
-    _quintet_bind_bare_cli "$providers" "${plist[@]}"
+    _quintet_bind_bare_cli "$prov_arg" "${plist[@]}"
 
     log INFO "── debate round 1: independent positions ──"
     local r1
-    r1="$(_quintet_fan_out "$question" "$providers" "${plist[@]}")" || return 1
+    r1="$(_quintet_fan_out "$question" "$prov_arg" "${plist[@]}")" || return 1
     [[ -d "$r1" ]] || return 1
     local round1_text; round1_text="$(_quintet_render_dir "$r1")"
     echo "$round1_text"
@@ -514,10 +513,10 @@ ${answers}
 
 Critique the other answers — name specifically where they are wrong or incomplete — then give your refined final position. Be concise and concrete. Do not restate the question."
     # Re-resolve: round-1 failures may have opened a circuit breaker.
-    _quintet_resolve_providers plist "$providers"
+    _quintet_resolve_providers plist "$prov_arg"
     [[ "${#plist[@]}" -ge 1 ]] || { rm -rf "$r1"; die "fleet debate: no ready providers for round 2"; }
     local r2
-    r2="$(_quintet_fan_out "$critique_prompt" "$providers" "${plist[@]}")" || { rm -rf "$r1"; return 1; }
+    r2="$(_quintet_fan_out "$critique_prompt" "$prov_arg" "${plist[@]}")" || { rm -rf "$r1"; return 1; }
     [[ -d "$r2" ]] || { rm -rf "$r1"; return 1; }
     local round2_text; round2_text="$(_quintet_render_dir "$r2")"
     echo "$round2_text"

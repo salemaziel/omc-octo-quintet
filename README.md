@@ -122,6 +122,14 @@ quintet prune        # prune stale team states & debate archives [--days N] [--d
 
 `<P>` ∈ `CLAUDE CODEX AGY COPILOT QWEN OPENCODE`.
 
+## Team-mode notes
+
+- `--safe` workers block on approval prompts. Find them with `quintet team doctor <name>` and answer with `quintet team send <name> <worker> "y"`. There is no escalation path yet: nothing pauses a worker and asks the orchestrator for you.
+- Worker names are exact (`w1-claude`, `w2-codex-implementer`). The old `w1` shorthand no longer works; see `quintet team status <name>`.
+- `--no-mcp` is partial for some providers: copilot only drops its built-in servers (user, workspace and plugin servers stay on), and agy/qwen/opencode have no MCP-off flag. A WARN says so and `team.json` records `no_mcp_effective`.
+- When a worker's CLI exits, its tmux window stays open as a dead pane (`remain-on-exit`) so the output can be read. `team shutdown` removes them.
+- Provider auth detection is a heuristic (file and env-var presence, never values). `unverified` in `quintet doctor` means it could not tell.
+
 ## Architecture
 
 ```
