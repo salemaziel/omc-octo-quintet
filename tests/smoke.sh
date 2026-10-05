@@ -8,6 +8,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${ROOT}/bin/quintet"
 PASS=0; FAIL=0
+
+# Test isolation: every tmux call (quintet's qtmux and this script's ttmux) goes
+# to a private server, never the user's default one. Killed on exit.
+export QUINTET_TMUX_SOCKET="quintet-test-$$"
+unset TMUX
+ttmux() { tmux -L "$QUINTET_TMUX_SOCKET" "$@"; }
+trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET"' EXIT
 ok()   { echo "  ✅ $1"; PASS=$((PASS+1)); }
 bad()  { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 
@@ -88,11 +95,11 @@ else
     # Pre-flight auth checks
     auth_err=$("$BIN" team 1:qwen "fail task" --name "smoke-auth-fail-$$" --cwd /tmp 2>&1 || true)
     echo "$auth_err" | grep -q "not ready/authenticated" && ok "pre-flight auth rejects unready provider" || bad "pre-flight auth rejects unready provider"
-    tmux has-session -t "quintet-smoke-auth-fail-$$" 2>/dev/null && bad "pre-flight session created on failure" || ok "no session created on auth failure"
+    ttmux has-session -t "quintet-smoke-auth-fail-$$" 2>/dev/null && bad "pre-flight session created on failure" || ok "no session created on auth failure"
 
     export QUINTET_QWEN_LAUNCH='bash --norc' QUINTET_QWEN_WARMUP=1
     "$BIN" team 1:qwen "skip auth" --name "smoke-auth-skip-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1 || true
-    tmux has-session -t "quintet-smoke-auth-skip-$$" 2>/dev/null && ok "--skip-auth-check permits start" || bad "--skip-auth-check permits start"
+    ttmux has-session -t "quintet-smoke-auth-skip-$$" 2>/dev/null && ok "--skip-auth-check permits start" || bad "--skip-auth-check permits start"
     "$BIN" team shutdown "smoke-auth-skip-$$" --force >/dev/null 2>&1 || true
     unset QUINTET_QWEN_LAUNCH QUINTET_QWEN_WARMUP
 
@@ -123,7 +130,7 @@ else
     echo "$doctor_out" | grep -q "Remediation:" && ok "team doctor gives remediation" || bad "team doctor gives remediation"
 
     "$BIN" team shutdown "$T" --force >/dev/null 2>&1 && ok "team shutdown" || bad "team shutdown"
-    tmux has-session -t "quintet-$T" 2>/dev/null && bad "session cleaned" || ok "session cleaned"
+    ttmux has-session -t "quintet-$T" 2>/dev/null && bad "session cleaned" || ok "session cleaned"
     rm -f "$marker"; rm -rf "$QUINTET_STATE_DIR"
 fi
 

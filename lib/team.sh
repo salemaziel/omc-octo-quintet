@@ -358,6 +358,6 @@ quintet_team_shutdown() {
 }
 
 quintet_team_list() {
-    tmux list-sessions -F '#{session_name}' 2>/dev/null \
+    qtmux list-sessions -F '#{session_name}' 2>/dev/null \
         | grep '^quintet-' | sed 's/^quintet-/  • /' || echo "  (no quintet teams running)"
 }
