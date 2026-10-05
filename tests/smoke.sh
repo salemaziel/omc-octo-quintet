@@ -22,6 +22,8 @@ echo "── 2. cli surface ──"
 "$BIN" providers >/dev/null 2>&1 && ok "providers" || bad "providers"
 "$BIN" providers | grep "agy" >/dev/null && ok "providers lists agy" || bad "providers lists agy"
 "$BIN" providers | grep "opencode" >/dev/null && ok "providers lists opencode" || bad "providers lists opencode"
+"$BIN" roles     >/dev/null 2>&1 && ok "roles" || bad "roles"
+"$BIN" roles | grep "implementer" >/dev/null && ok "roles lists implementer" || bad "roles lists implementer"
 "$BIN" doctor   >/dev/null 2>&1; [[ $? -le 1 ]] && ok "doctor runs" || bad "doctor runs"
 
 echo "── 2b. agy provider & alias resolution ──"
@@ -39,6 +41,14 @@ echo "── 2c. opencode provider & spec resolution ──"
 [[ "$(quintet_provider_bin "opencode")" == "opencode" ]] && ok "bin for opencode is opencode" || bad "bin for opencode is opencode"
 [[ "$(quintet_provider_emoji "opencode")" == "🟧" ]] && ok "emoji for opencode is 🟧" || bad "emoji for opencode is 🟧"
 [[ "$(quintet_provider_launch_cmd "opencode")" == "opencode --auto" ]] && ok "launch cmd for opencode is opencode --auto" || bad "launch cmd for opencode"
+
+echo "── 2d. subagent roles ──"
+source "${ROOT}/lib/roles.sh"
+quintet_role_exists "implementer" && ok "role exists: implementer" || bad "role exists: implementer"
+quintet_role_exists "stock" && ok "role exists: stock" || bad "role exists: stock"
+quintet_role_exists "nonexistent_role" && bad "nonexistent role should not exist" || ok "nonexistent role rejected"
+[[ -n "$(quintet_role_prompt "implementer")" ]] && ok "role prompt returned for implementer" || bad "role prompt returned for implementer"
+[[ -z "$(quintet_role_prompt "stock")" ]] && ok "role prompt empty for stock" || bad "role prompt empty for stock"
 
 echo "── 3. tmux team lifecycle (shell stand-in workers) ──"
 if ! command -v tmux >/dev/null 2>&1; then

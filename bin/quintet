@@ -13,6 +13,7 @@ export QUINTET_ROOT
 # shellcheck source=/dev/null
 source "${QUINTET_ROOT}/lib/common.sh"
 source "${QUINTET_ROOT}/lib/providers.sh"
+source "${QUINTET_ROOT}/lib/roles.sh"
 source "${QUINTET_ROOT}/lib/reliability.sh"
 source "${QUINTET_ROOT}/lib/tmux.sh"
 source "${QUINTET_ROOT}/lib/team.sh"
@@ -45,6 +46,7 @@ FLEET MODE (one-shot multi-AI dispatch):
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq
   quintet providers       # list provider readiness
+  quintet roles           # list supported subagent worker roles
   quintet version
 EOF
 }
@@ -103,6 +105,7 @@ main() {
         review)        quintet_fleet_review "$@" ;;
         doctor)        cmd_doctor ;;
         providers)     cmd_providers ;;
+        roles)         quintet_role_list ;;
         version|-v|--version) echo "quintet ${VERSION}" ;;
         help|-h|--help|"") usage ;;
         *) log ERROR "unknown command: $cmd"; usage; exit 1 ;;
