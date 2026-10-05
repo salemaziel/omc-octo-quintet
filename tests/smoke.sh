@@ -245,6 +245,68 @@ out=$(PATH="$sb:$PATH" HOME="$fh" QUINTET_HOME="$fh/.quintet" QUINTET_CODEX_ONES
 unset QUINTET_CLAUDE_LAUNCH QUINTET_CLAUDE_WARMUP QUINTET_STATE_DIR
 rm -rf "$V"
 
+echo "── 6. tmux targeting & worker environment ──"
+W="$(mktemp -d)"; mkdir -p "$W/home" "$W/tmp" "$W/ftmp"
+export QUINTET_STATE_DIR="$W/state" QUINTET_CLAUDE_LAUNCH='bash --norc' QUINTET_CLAUDE_WARMUP=1
+
+# A2: exact session/window targets (no tmux prefix matching).
+P1="pfx-$$"; P2="pfx-$$-bar"
+"$BIN" team 1:claude:implementer "t" --name "$P2" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+ttmux has-session -t "=quintet-$P2" 2>/dev/null && ok "team $P2 started" || bad "team $P2 started"
+"$BIN" team status "$P1" >/dev/null 2>&1 && bad "status of prefix name is not running" || ok "status of prefix name is not running"
+"$BIN" team send "$P2" "w1-claude" "echo x" >/dev/null 2>&1 && bad "send to worker prefix rejected" || ok "send to worker prefix rejected"
+[[ -z "$("$BIN" team capture "$P2" "w1-claude" 2>/dev/null)" ]] && ok "capture of worker prefix is empty" || bad "capture of worker prefix is empty"
+"$BIN" team 1:claude "t" --name "$P1" --skip-auth-check --cwd /tmp >/dev/null 2>&1 && ok "prefix-named team starts alongside" || bad "prefix-named team starts alongside"
+"$BIN" team shutdown "$P1" --force >/dev/null 2>&1
+ttmux has-session -t "=quintet-$P2" 2>/dev/null && ok "shutdown $P1 leaves quintet-$P2" || bad "shutdown $P1 leaves quintet-$P2"
+ttmux has-session -t "=quintet-$P1" 2>/dev/null && bad "shutdown $P1 kills quintet-$P1" || ok "shutdown $P1 kills quintet-$P1"
+"$BIN" team shutdown "$P2" --force >/dev/null 2>&1
+
+# A4: allowlisted caller env reaches workers even when the tmux server was
+# started with an empty environment. Dummy vars only; values are never printed.
+ESOCK="${QUINTET_TMUX_SOCKET}-env"
+trap 'tmux -L "$QUINTET_TMUX_SOCKET" kill-server >/dev/null 2>&1; tmux -L "$ESOCK" kill-server >/dev/null 2>&1; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$QUINTET_TMUX_SOCKET" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$ESOCK"' EXIT
+mkdir -p "$W/srvhome"
+env -i PATH=/usr/bin:/bin HOME="$W/srvhome" "$(command -v tmux)" -L "$ESOCK" new-session -d -s keepalive -c "$W" sleep 3600
+probe="qprobe-$$-val"; emarker="$W/env-marker.txt"
+(
+    export QUINTET_TMUX_SOCKET="$ESOCK" HOME="$W/home" QUINTET_HOME="$W/home/.quintet" TMPDIR="$W/tmp"
+    export QUINTET_TEST_PROBE="$probe" NOT_ALLOWED_PROBE="$probe"
+    "$BIN" team 1:claude "t" --name "envt-$$" --skip-auth-check --cwd /tmp >/dev/null 2>&1
+    "$BIN" team send "envt-$$" "w1-claude" \
+        "echo \"probe=\${QUINTET_TEST_PROBE:+set} other=\${NOT_ALLOWED_PROBE:+set} home=\$([ \"\$HOME\" = \"$W/home\" ] && echo fake)\" > $emarker" >/dev/null 2>&1
+)
+sleep 1.5
+[[ "$(cat "$emarker" 2>/dev/null)" == "probe=set other= home=fake" ]] && ok "team worker gets allowlisted env, not others" || bad "team worker gets allowlisted env, not others (got '$(cat "$emarker" 2>/dev/null)')"
+tmux -L "$ESOCK" list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -q -- "$probe" && bad "env values absent from pane argv" || ok "env values absent from pane argv"
+[[ -z "$(find "$W/tmp" -name '*.env' 2>/dev/null)" && -z "$(find "$W/tmp" -maxdepth 1 -name 'quintet-env.*' 2>/dev/null)" ]] && ok "no team env file remains after spawn" || bad "no team env file remains after spawn"
+QUINTET_TMUX_SOCKET="$ESOCK" "$BIN" team shutdown "envt-$$" --force >/dev/null 2>&1
+fout=$(export QUINTET_TMUX_SOCKET="$ESOCK" HOME="$W/home" QUINTET_HOME="$W/home/.quintet" TMPDIR="$W/ftmp"
+    export ANTHROPIC_BASE_URL="http://quintet-probe.invalid" NOT_ALLOWED_PROBE="$probe"
+    export QUINTET_CLAUDE_ONESHOT_CMD='echo "base=${ANTHROPIC_BASE_URL:+set} other=${NOT_ALLOWED_PROBE:+set} files=$(ls "$TMPDIR"/quintet-fleet.*/ | tr "\n" " ")"'
+    "$BIN" fleet "hi" claude 2>/dev/null)
+echo "$fout" | grep -q "base=set other= files=" && ok "fleet tmux worker gets provider allowlist, not others" || bad "fleet tmux worker gets provider allowlist, not others"
+flist=$(echo "$fout" | grep "files=")
+[[ "$flist" == *prompt.txt* && "$flist" != *.env* && "$flist" != *env.sh* ]] && ok "fleet env file deleted before exec (no env.sh)" || bad "fleet env file deleted before exec (no env.sh)"
+tmux -L "$ESOCK" kill-server >/dev/null 2>&1
+
+# A4 / A13: per-provider allowlist and 0600 file in a 0700 dir.
+mkdir -m 700 "$W/envd"
+( export OPENAI_BASE_URL="http://quintet-probe.invalid" QUINTET_TEST_PROBE="$probe" NOT_ALLOWED_PROBE="$probe"
+  quintet_write_worker_env claude "$W/envd/c.env"; quintet_write_worker_env codex "$W/envd/x.env" )
+[[ "$(grep -c '^declare -x OPENAI_BASE_URL=' "$W/envd/c.env")" == 0 ]] && ok "codex var not in claude env file" || bad "codex var not in claude env file"
+[[ "$(grep -c '^declare -x OPENAI_BASE_URL=' "$W/envd/x.env")" == 1 ]] && ok "codex var in codex env file" || bad "codex var in codex env file"
+grep -q '^declare -x NOT_ALLOWED_PROBE=' "$W/envd/c.env" && bad "unlisted var not written" || ok "unlisted var not written"
+grep -q '^declare -x QUINTET_TEST_PROBE=' "$W/envd/c.env" && ok "QUINTET_* var written" || bad "QUINTET_* var written"
+[[ "$(stat -c %a "$W/envd/c.env")" == 600 ]] && ok "worker env file is 0600" || bad "worker env file is 0600"
+
+# Doctor shows the tmux version.
+doc_out=$("$BIN" doctor 2>/dev/null)
+echo "$doc_out" | grep -q -E '^tmux .*\(tmux [0-9]' && ok "doctor prints tmux version" || bad "doctor prints tmux version"
+
+unset QUINTET_CLAUDE_LAUNCH QUINTET_CLAUDE_WARMUP QUINTET_STATE_DIR
+rm -rf "$W"
+
 echo
 echo "── result: ${PASS} passed, ${FAIL} failed ──"
 [[ "$FAIL" -eq 0 ]]

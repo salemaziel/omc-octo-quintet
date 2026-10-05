@@ -165,6 +165,15 @@ quintet_team_start() {
     # Build manifest header.
     local manifest="${tdir}/team.json"
     local worker_json="" idx=1
+    # Per-worker env files (A4): 0600 files in a private 0700 dir; each worker
+    # deletes its own before exec. The trap removes leftovers on abort.
+    local envdir
+    envdir="$(mktemp -d "${TMPDIR:-/tmp}/quintet-env.XXXXXX")" || die "team start: cannot create env dir"
+    chmod 700 "$envdir"
+    # shellcheck disable=SC2064  # expand envdir now; the local is gone at EXIT
+    trap "rm -rf -- $(printf '%q' "$envdir")" EXIT
+    # shellcheck disable=SC2064
+    trap "rm -rf -- $(printf '%q' "$envdir"); exit 130" INT TERM
     quintet_session_create "$name" "$cwd"
 
     local worker_entry provider rem role model worker_name wtask role_prompt
@@ -210,7 +219,9 @@ Coordinate by appending status to ${board} (one line, prefixed with [${worker_na
 Avoid editing files another worker owns. When done, write a final [${worker_name}] DONE line to the taskboard."
 
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
-        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$team_effort" "$safe_mode")" || continue
+        local envf="${envdir}/${worker_name}.env"
+        quintet_write_worker_env "$provider" "$envf" || die "team start: cannot write worker env file"
+        quintet_window_spawn "$name" "$worker_name" "$cwd" "$(quintet_provider_launch_cmd "$provider" "$no_mcp" "$model" "$team_effort" "$safe_mode")" "$envf" || continue
         echo "- **${worker_name}** ($provider, role: ${role}): ${wtask}" >> "$board"
         worker_json="${worker_json}${worker_json:+,}{\"name\": $(json_escape "${worker_name}"), \"provider\": $(json_escape "${provider}"), \"role\": $(json_escape "${role}"), \"model\": $(json_escape "${model:-default}")}"
 
@@ -233,6 +244,15 @@ Avoid editing files another worker owns. When done, write a final [${worker_name
     } > "$manifest"
 
     wait   # let deferred task injections finish before returning
+    # Workers delete their env file on start; give slow starters a moment, then
+    # remove whatever is left (a worker that never started must not leave secrets).
+    local _w
+    for _w in 1 2 3 4 5 6 7 8 9 10; do
+        compgen -G "${envdir}/*.env" >/dev/null || break
+        sleep 0.5
+    done
+    rm -rf -- "$envdir"
+    trap - EXIT INT TERM
     log INFO "team '$name' started with ${#workers[@]} worker(s). Attach: tmux attach -t $(quintet_tmux_session "$name")"
     printf "Tmux session: tmux attach -t %s\n" "$(quintet_tmux_session "$name")" >&2
     echo "$name"
@@ -352,7 +372,8 @@ quintet_team_send() {
     [[ -n "$name" && -n "$worker" && -n "$text" ]] || die "usage: quintet team send <name> <worker> <text>"
     quintet_validate_team_name "$name"
     quintet_session_exists "$name" || die "team '$name' is not running"
-    quintet_window_send "$name" "$worker" "$text"
+    quintet_window_send "$name" "$worker" "$text" \
+        || die "team send: no worker window '$worker' in team '$name' (worker names are exact; see: quintet team status $name)"
     log INFO "sent to ${name}/${worker}"
 }
 

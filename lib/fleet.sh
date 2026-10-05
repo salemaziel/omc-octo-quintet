@@ -153,24 +153,30 @@ _quintet_fan_out_tmux() {
     local prompt_file="${rundir}/prompt.txt"
     printf '%s' "$prompt" > "$prompt_file"
 
-    local env_dump="${rundir}/env.sh"
-    export -p | grep -E '^declare -x (QUINTET_|COPILOT_|GEMINI_|QWEN_)' > "$env_dump" 2>/dev/null || true
-
     local sess="quintet-fleet-$(now_epoch)-$$-${RANDOM}"
     if ! qtmux new-session -d -s "$sess" -c "$PWD" -n "leader" 2>/dev/null; then
         return 1
     fi
+    # Per-worker env files live in the 0700 rundir; remove leftovers on abort (A4/A13).
+    # shellcheck disable=SC2064  # expand rundir now
+    trap "rm -f -- $(printf '%q' "$rundir")/*.env" EXIT
+    # shellcheck disable=SC2064
+    trap "rm -f -- $(printf '%q' "$rundir")/*.env; exit 130" INT TERM
 
     log INFO "Fleet session active. View live with: tmux attach -t $sess"
     printf "Tmux session: tmux attach -t %s\n" "$sess" >&2
-    qtmux send-keys -t "${sess}:leader" "printf 'quintet fleet session %s\nProviders: %s\n' '$sess' '${providers[*]}'" Enter
+    qtmux send-keys -t "=${sess}:=leader" "printf 'quintet fleet session %s\nProviders: %s\n' '$sess' '${providers[*]}'" Enter
 
-    local p out
+    local p out envf
     for p in "${providers[@]}"; do
         log INFO "dispatching (tmux) → $(quintet_provider_emoji "$p") $p"
         out="${rundir}/${p}.out"
-        qtmux new-window -t "$sess" -n "$p" -c "$PWD" \
-            "bash -c 'if [ -f \"$env_dump\" ]; then source \"$env_dump\"; fi; exec \"${QUINTET_ROOT}/bin/quintet\" __fleet_worker \"$p\" \"$prompt_file\" \"$out\" \"$no_mcp\"'"
+        envf="${rundir}/${p}.env"
+        quintet_write_worker_env "$p" "$envf" || { log ERROR "fleet: cannot write env file for $p"; continue; }
+        # shellcheck disable=SC2016  # $1/$@ expand in the worker's bash
+        qtmux new-window -t "=$sess" -n "$p" -c "$PWD" \
+            bash -c '. "$1" || { echo "quintet: cannot read worker env file" >&2; exit 1; }; rm -f -- "$1"; shift; exec "$@"' \
+            quintet-worker "$envf" "${QUINTET_ROOT}/bin/quintet" __fleet_worker "$p" "$prompt_file" "$out" "$no_mcp"
     done
 
     # Poll status files for completion
@@ -198,7 +204,9 @@ _quintet_fan_out_tmux() {
         fi
     done
 
-    qtmux kill-session -t "$sess" 2>/dev/null || true
+    qtmux kill-session -t "=$sess" 2>/dev/null || true
+    rm -f -- "$rundir"/*.env
+    trap - EXIT INT TERM
     return 0
 }
 

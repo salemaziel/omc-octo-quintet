@@ -66,39 +66,94 @@ quintet_provider_installed() {
     command -v "$(quintet_provider_bin "$1")" >/dev/null 2>&1
 }
 
-# Report the auth method in use (best-effort, never blocks).
-# Echoes a short token: oauth | api-key | gh-cli | keychain | none | unknown
-quintet_provider_auth() {
+# Single source of truth for the env var NAMES a provider's worker needs
+# (auth + config). Values are never listed or logged here.
+# quintet_provider_env_vars <provider> [--auth]
+#   --auth : only the credential vars, in the order quintet_provider_auth checks them.
+# Without --auth: credential vars, then provider config vars.
+quintet_provider_env_vars() {
+    local -a auth=() conf=()
     case "$1" in
         claude)
-            # Claude Code: subscription/OAuth in ~/.claude or ANTHROPIC_API_KEY.
-            if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "api-key";
+            auth=(ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN)
+            conf=(ANTHROPIC_BASE_URL CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX
+                  AWS_REGION AWS_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+                  AWS_SESSION_TOKEN AWS_BEARER_TOKEN_BEDROCK
+                  ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
+                  GOOGLE_CLOUD_PROJECT GOOGLE_APPLICATION_CREDENTIALS) ;;
+        codex)       auth=(OPENAI_API_KEY); conf=(OPENAI_BASE_URL) ;;
+        agy|gemini)  auth=(GEMINI_API_KEY GOOGLE_API_KEY) ;;
+        copilot)     auth=(COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
+        qwen)        auth=(QWEN_API_KEY) ;;
+        opencode)    auth=(OPENCODE_API_KEY OPENROUTER_API_KEY) ;;
+    esac
+    if [[ "${2:-}" == "--auth" ]]; then
+        printf '%s\n' "${auth[@]}"
+    else
+        printf '%s\n' "${auth[@]}" "${conf[@]}"
+    fi
+}
+
+# Env var names every worker gets regardless of provider (QUINTET_* is matched
+# by prefix in quintet_write_worker_env).
+QUINTET_COMMON_ENV_VARS=(PATH HOME TMPDIR XDG_DATA_HOME XDG_CONFIG_HOME
+    HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy)
+
+# quintet_write_worker_env <provider> <file>
+# Writes the caller's exported, allowlisted vars (common + provider's list +
+# QUINTET_*) to <file> as `declare -x NAME=<%q value>` lines, mode 0600.
+# The file's dir must already be 0700. Values are never echoed or logged.
+quintet_write_worker_env() {
+    local provider="$1" file="$2" v
+    local -A allow=()
+    for v in "${QUINTET_COMMON_ENV_VARS[@]}"; do allow[$v]=1; done
+    while IFS= read -r v; do [[ -n "$v" ]] && allow[$v]=1; done < <(quintet_provider_env_vars "$provider")
+    (
+        umask 077
+        : > "$file" || exit 1
+        while IFS= read -r v; do
+            [[ -n "${allow[$v]:-}" || "$v" == QUINTET_* ]] || continue
+            printf 'declare -x %s=%q\n' "$v" "${!v}"
+        done < <(compgen -e) > "$file"
+    )
+}
+
+# Report the auth method in use (best-effort, never blocks).
+# Echoes a short token: oauth | api-key | gh-cli | keychain | none | unknown
+# Credential env var names come from quintet_provider_env_vars --auth.
+quintet_provider_auth() {
+    local v env_hit=""
+    while IFS= read -r v; do
+        [[ -n "$v" && -n "${!v:-}" ]] && { env_hit="$v"; break; }
+    done < <(quintet_provider_env_vars "$1" --auth)
+    case "$1" in
+        claude)
+            # Claude Code: subscription/OAuth in ~/.claude or an API key/token env var.
+            if [[ -n "$env_hit" ]]; then echo "api-key";
             elif [[ -f "${HOME}/.claude/.credentials.json" || -d "${HOME}/.claude" ]]; then echo "oauth";
             else echo "unknown"; fi ;;
         codex)
             if [[ -f "${HOME}/.codex/auth.json" ]]; then echo "oauth";
-            elif [[ -n "${OPENAI_API_KEY:-}" ]]; then echo "api-key";
+            elif [[ -n "$env_hit" ]]; then echo "api-key";
             else echo "none"; fi ;;
         agy|gemini)
-            if [[ -n "${GEMINI_API_KEY:-}${GOOGLE_API_KEY:-}" ]]; then echo "api-key";
+            if [[ -n "$env_hit" ]]; then echo "api-key";
             elif [[ -f "${HOME}/.gemini/oauth_creds.json" || -f "${HOME}/.gemini/google_accounts.json" || -d "${HOME}/.gemini/antigravity-cli" || -d "${HOME}/.gemini" ]]; then echo "oauth";
             else echo "unknown"; fi ;;
         copilot)
-            if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then echo "env:COPILOT_GITHUB_TOKEN";
-            elif [[ -n "${GH_TOKEN:-}" ]]; then echo "env:GH_TOKEN";
-            elif [[ -n "${GITHUB_TOKEN:-}" ]]; then echo "env:GITHUB_TOKEN";
+            if [[ -n "$env_hit" ]]; then echo "env:${env_hit}";
             elif [[ -f "${HOME}/.copilot/config.json" ]]; then echo "keychain";
             elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then echo "gh-cli";
             else echo "none"; fi ;;
         qwen)
             if [[ -f "${HOME}/.qwen/oauth_creds.json" ]]; then echo "oauth";
             elif [[ -f "${HOME}/.qwen/config.json" ]]; then echo "config";
-            elif [[ -n "${QWEN_API_KEY:-}" ]]; then echo "api-key";
+            elif [[ -n "$env_hit" ]]; then echo "api-key";
             else echo "none"; fi ;;
         opencode)
             local auth_file="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
             if [[ -s "$auth_file" ]]; then echo "oauth";
-            elif [[ -n "${OPENCODE_API_KEY:-}${OPENROUTER_API_KEY:-}" ]]; then echo "api-key";
+            elif [[ -n "$env_hit" ]]; then echo "api-key";
             else echo "none"; fi ;;
         *) echo "unknown" ;;
     esac
@@ -174,10 +229,9 @@ quintet_provider_oneshot() {
                 [[ -n "$effort" ]] && cmd+=(--effort "$effort")
                 ;;
             copilot)
-                if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
-                    cmd=(env "COPILOT_GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}")
-                fi
-                cmd+=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
+                # COPILOT_GITHUB_TOKEN is inherited from the environment; never
+                # put it in argv (visible in /proc/*/cmdline).
+                cmd=(timeout "$timeout_secs" copilot -p "$prompt" --no-ask-user -s --disable-builtin-mcps)
                 [[ -n "$model" ]] && cmd+=(--model "$model")
                 ;;
             qwen)

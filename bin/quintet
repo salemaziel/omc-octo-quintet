@@ -64,7 +64,7 @@ cmd_doctor() {
     echo "quintet ${VERSION} — environment check"
     echo
     printf '%-10s %-12s %s\n' "TOOL" "STATUS" "DETAIL"
-    printf '%-10s %-12s %s\n' "tmux" "$(quintet_tmux_available && echo ok || echo MISSING)" "$(command -v tmux || echo 'team mode unavailable')"
+    printf '%-10s %-12s %s\n' "tmux" "$(quintet_tmux_available && echo ok || echo MISSING)" "$(quintet_tmux_available && printf '%s (%s)' "$(command -v tmux)" "$(tmux -V 2>/dev/null || echo 'version unknown')" || echo 'team mode unavailable')"
     printf '%-10s %-12s %s\n' "jq"   "$(have_jq && echo ok || echo missing)" "$(command -v jq || echo 'optional, manual JSON fallback used')"
     echo
     printf '%-10s %-12s %-14s %s\n' "PROVIDER" "INSTALLED" "AUTH" "HINT"
