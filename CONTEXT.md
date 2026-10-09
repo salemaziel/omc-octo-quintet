@@ -19,7 +19,7 @@ Quintet is the unified multi-agent orchestrator plugin and CLI for AI coding age
 - **`roles/`**: Subagent role definitions (`implementer`, `code-reviewer`, `security-auditor`, `test-engineer`, `debugger`, `devops-troubleshooter`).
 - **`skills/`**: Agent skills for orchestration, team runtime, fleet dispatch, reviews, consults, debates, and doctor readiness.
 - **`commands/`**: Slash commands and TOML templates for Claude, Codex, Gemini/AGY, and Copilot.
-- **`tests/smoke.sh`**: Test suite verifying syntax, CLI surface, provider registry, roles, and team lifecycle.
+- **`tests/smoke.sh`**: Heavyweight manual tmux integration test harness. **Do NOT run automatically** — only run if the user explicitly requests running smoke tests.
 
 ---
 

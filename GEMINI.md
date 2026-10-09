@@ -31,11 +31,16 @@ When ambiguous ("improve this module with the models"), ask whether they want th
 
 ## Team mode discipline
 
-Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Agy → breadth/docs, Copilot/OpenCode → extra perspectives, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real files and tests**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
+Workers share one working directory and can clobber each other. Decompose the task into file/module-scoped subtasks so no two workers own the same paths, then map each to a provider (Codex/Claude → implementation, Agy → breadth/docs, Copilot/OpenCode → extra perspectives, Qwen → free-tier bulk). Monitor with `quintet team status` / `quintet team capture` and read `.quintet/teams/<name>/taskboard.md` — but **verify the real file artifacts and diffs**, not the self-reported taskboard. Always `quintet team shutdown <name>` when verified. Max 10 workers; 3–5 well-scoped beat 10 overlapping.
 
 ## Fleet mode discipline
 
 Fleet **collects** answers; it does not pick a winner. After the command returns, synthesize: state the consensus, surface disagreements (and which model held which view), and give one recommendation with reasoning. For `debate`, weigh the round-2 refined positions. Never paste raw blocks back — the synthesized paragraph is the deliverable.
+
+## Testing Policy — Never Run Tests Automatically
+
+- **Do NOT run `tests/smoke.sh` unprompted or as a completion gate.** `tests/smoke.sh` is a heavyweight, slow (>1200 lines) tmux integration harness. Only run it if the user explicitly asks to run smoke tests.
+- For normal code changes, syntax checks (`bash -n`), diffs, version updates, and documentation: **conclude without running test suites**.
 
 ## Guardrails
 
