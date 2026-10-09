@@ -2,7 +2,7 @@
 name: doctor
 description: Audits and checks which Quintet provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) are installed, authenticated, and ready for fleet/team orchestration. Use when checking AI model readiness, diagnosing CLI authentication, or verifying available provider pools.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   category: multi-agent-orchestration
   tags: quintet, doctor, readiness, auth, diagnostics
 ---

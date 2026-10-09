@@ -26,7 +26,7 @@ source "${QUINTET_ROOT}/lib/team.sh"
 source "${QUINTET_ROOT}/lib/fleet.sh"
 source "${QUINTET_ROOT}/lib/prune.sh"
 
-VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.1.0")"
+VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.2.0")"
 
 usage() {
 cat <<'EOF'

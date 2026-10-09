@@ -7,7 +7,7 @@
   },
   "description": "Via del Web plugin marketplace for coding-CLI agents.",
   "metadata": {
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
       "source": "./",
       "displayName": "Quintet",
       "description": "One orchestrator for six coding-agent CLIs (Claude Code, Codex, Google Antigravity / agy, Copilot, Qwen, OpenCode): persistent tmux worker teams plus one-shot multi-AI fleet dispatch / debate / review.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "salemaziel"
       },

@@ -2,7 +2,7 @@
 name: review
 description: Runs a multi-model code review of a diff or target file across ready AI provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode), synthesizing severity-ranked findings into a single go/no-go verdict. Use when reviewing code changes, auditing git diffs, checking PRs, inspecting security flaws, or getting multi-AI code reviews.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   category: multi-agent-orchestration
   tags: quintet, review, code-review, git-diff, pr-review, security-audit
 ---

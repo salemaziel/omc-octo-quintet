@@ -2,7 +2,7 @@
 name: team
 description: Spawns persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) to implement features, refactor code, and edit files in parallel. Use when executing multi-file implementation plans, running parallel AI workers, or building complex features concurrently.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   category: multi-agent-orchestration
   tags: quintet, team, tmux, parallel-workers, file-editing
 ---

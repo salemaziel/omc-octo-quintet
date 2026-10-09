@@ -2,7 +2,7 @@
 name: consult
 description: Fans out a question across all ready AI provider CLIs in parallel and synthesizes a single recommendation. Use when comparing AI answers, asking multiple models (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode), seeking multi-model consensus, or aggregating opinions on read-only questions.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   category: multi-agent-orchestration
   tags: quintet, consult, multi-model, consensus, parallel-ai
 ---

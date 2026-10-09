@@ -2,7 +2,7 @@
 name: debate
 description: Runs a two-round cross-model debate across ready AI provider CLIs, then synthesizes a converged verdict. Use when resolving contested technical decisions, evaluating architectural trade-offs, or requiring multi-model cross-critique between AI CLIs.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   category: multi-agent-orchestration
   tags: quintet, debate, cross-critique, multi-model, architecture
 ---
