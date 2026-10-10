@@ -2,7 +2,7 @@
 name: consult
 description: Quick-action skill to fan out a question across ready AI provider CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode) in parallel and synthesize a single recommendation. Use for one-shot advisory queries or when invoking /consult. For deep multi-model debate/review and circuit-breaker behavior, see quintet-fleet-dispatch.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   category: multi-agent-orchestration
   tags: quintet, consult, multi-model, consensus, parallel-ai
 ---

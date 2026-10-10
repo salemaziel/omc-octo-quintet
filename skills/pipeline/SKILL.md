@@ -2,7 +2,7 @@
 name: pipeline
 description: Run an Interpretable Context Methodology (ICM) staged folder pipeline with human check gates and edit surfaces. Use for multi-stage debate-build or review-fix workflows.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   category: multi-agent-orchestration
   tags: quintet, icm, pipeline, staged-folders
 ---

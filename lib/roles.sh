@@ -33,6 +33,11 @@ QUINTET_ROLES=(
     "devops-troubleshooter"
     "site-reliability-engineer"
     "technical-writer"
+    "prompt-engineer"
+    "release-captain"
+    "codebase-auditor"
+    "secret-scanner"
+    "kubernetes-architect"
 
     # Design (inc. Web Design)
     "web-designer"
@@ -42,6 +47,7 @@ QUINTET_ROLES=(
     "ux-architect"
     "accessibility-specialist"
     "ux-researcher"
+    "chief-designer"
 
     # Business
     "business-strategist"
@@ -116,6 +122,11 @@ quintet_normalize_role() {
         devops)                                           echo "devops-troubleshooter" ;;
         sre|observability)                                echo "site-reliability-engineer" ;;
         docs|writer|tech-writer)                          echo "technical-writer" ;;
+        prompt|prompter|prompt-craft)                     echo "prompt-engineer" ;;
+        release|releng|ship-captain)                      echo "release-captain" ;;
+        audit|codebase-audit|full-audit)                  echo "codebase-auditor" ;;
+        secrets|secret-scan|cred-scan)                    echo "secret-scanner" ;;
+        k8s|k8s-architect|kube)                           echo "kubernetes-architect" ;;
 
         # Design aliases
         webdesign|landing-designer)                       echo "web-designer" ;;
@@ -125,6 +136,7 @@ quintet_normalize_role() {
         ux|interaction-designer)                          echo "ux-architect" ;;
         a11y|accessibility)                               echo "accessibility-specialist" ;;
         ux-research|user-researcher)                      echo "ux-researcher" ;;
+        chief-design|design-lead|lead-designer)           echo "chief-designer" ;;
 
         # Business aliases
         biz-strat|corporate-strategist)                   echo "business-strategist" ;;
@@ -256,6 +268,52 @@ quintet_role_category() {
     basename "$(dirname "$target")"
 }
 
+# quintet_role_skills <role>
+# Extracts recommended skills from role file frontmatter as markdown bullet points.
+quintet_role_skills() {
+    local raw="$1"
+    [[ "$raw" == *".."* ]] && return 1
+
+    local r
+    r=$(quintet_normalize_role "$raw")
+    [[ "$r" == "stock" ]] && return 0
+
+    local f
+    f="$(quintet_role_file "$r" 2>/dev/null)" || return 1
+    [[ -f "$f" ]] || return 1
+
+    local in_frontmatter=0 in_skills=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "---" ]]; then
+            if (( in_frontmatter == 0 )); then
+                in_frontmatter=1
+                continue
+            else
+                break
+            fi
+        fi
+
+        if (( in_frontmatter == 1 )); then
+            if [[ "$line" =~ ^(recommended_skills|skills): ]]; then
+                in_skills=1
+                continue
+            fi
+            if (( in_skills == 1 )); then
+                if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.*) ]]; then
+                    local s="${BASH_REMATCH[1]}"
+                    s="${s#\"}"
+                    s="${s#\'}"
+                    s="${s%\"}"
+                    s="${s%\'}"
+                    echo "- \`$s\`"
+                elif [[ "$line" =~ ^[A-Za-z0-9_]+: ]]; then
+                    in_skills=0
+                fi
+            fi
+        fi
+    done < "$f"
+}
+
 # quintet_role_list [category|--plain]
 # Lists roles. When run interactively, displays grouped categories.
 # In pipes or with --plain, prints a flat newline-separated list starting with stock.
@@ -285,13 +343,21 @@ quintet_role_list() {
         for f in "${cat_dir}"/*.md; do
             [[ -f "$f" ]] || continue
             rname="$(basename "$f" .md)"
-            printf '  %-28s %s\n' "$rname" "$(head -n 3 "$f" | tail -n 1)"
+            local summary
+            summary="$(grep -E '^description:' "$f" 2>/dev/null | head -n 1 | sed -e 's/^description:[[:space:]]*//' -e 's/^["'"'"']//' -e 's/["'"'"']$//')"
+            if [[ -z "$summary" ]]; then
+                summary="$(grep -E '^Specialized instructions for' "$f" 2>/dev/null | sed 's/Specialized instructions for //; s/\.$//')"
+            fi
+            if [[ -z "$summary" ]]; then
+                summary="$(head -n 3 "$f" | tail -n 1)"
+            fi
+            printf '  %-28s %s\n' "$rname" "${summary:-}"
         done
         return 0
     fi
 
     # Interactive grouped overview
-    echo "quintet roles — 49 expert personas across 9 domains"
+    echo "quintet roles — 55 expert personas across 9 domains"
     echo
     echo "  Baseline: stock (unprompted CLI default)"
     echo
@@ -304,7 +370,10 @@ quintet_role_list() {
             [[ -f "$f" ]] || continue
             rname="$(basename "$f" .md)"
             local summary
-            summary="$(grep -E '^Specialized instructions for' "$f" 2>/dev/null | sed 's/Specialized instructions for //; s/\.$//')"
+            summary="$(grep -E '^description:' "$f" 2>/dev/null | head -n 1 | sed -e 's/^description:[[:space:]]*//' -e 's/^["'"'"']//' -e 's/["'"'"']$//')"
+            if [[ -z "$summary" ]]; then
+                summary="$(grep -E '^Specialized instructions for' "$f" 2>/dev/null | sed 's/Specialized instructions for //; s/\.$//')"
+            fi
             printf '  %-28s %s\n' "$rname" "${summary:-}"
         done
         echo

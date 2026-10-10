@@ -8,6 +8,9 @@ One job: {{SUBTASK}}
 - **Assigned Role**: {{ROLE}}
 - **Team Goal**: {{GOAL}}
 
+## Recommended Skills
+{{RECOMMENDED_SKILLS}}
+
 ## Inputs
 - **Working (this run)**: {{WORKING_INPUTS}}
 - **Reference (stable)**: {{ROLE_FILE_PATH}}

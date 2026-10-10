@@ -28,10 +28,14 @@ quintet_icm_write_worker_contract() {
     local working_inputs="${10:-"Subtask description: ${subtask}"}"
 
     local role_path=""
+    local skills=""
     if declare -f quintet_role_file >/dev/null 2>&1; then
         role_path="$(quintet_role_file "$role" 2>/dev/null || true)"
     fi
     [[ -n "$role_path" ]] || role_path="Stock model baseline"
+    if declare -f quintet_role_skills >/dev/null 2>&1; then
+        skills="$(quintet_role_skills "$role" 2>/dev/null || true)"
+    fi
 
     ensure_parent "$cfile"
     cat > "$cfile" <<EOF
@@ -44,6 +48,9 @@ One job: ${subtask}
 - **Provider CLI**: ${provider}
 - **Assigned Role**: ${role}
 - **Team Goal**: ${goal}
+
+## Recommended Skills
+${skills:-"- None specified (operate under standard role guidelines)"}
 
 ## Inputs
 - **Working (this run)**: ${working_inputs}

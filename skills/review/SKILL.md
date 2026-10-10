@@ -2,7 +2,7 @@
 name: review
 description: Quick-action skill to run a multi-model code review of a diff or target file across ready AI provider CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode). Use when reviewing code changes via /review.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   category: multi-agent-orchestration
   tags: quintet, review, code-review, git-diff, pr-review, security-audit
 ---

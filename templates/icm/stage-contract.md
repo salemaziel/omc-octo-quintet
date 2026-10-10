@@ -6,6 +6,9 @@ One job: {{STAGE_PURPOSE}}
 - **Working (this run)**: {{INPUT_WORKING_ARTIFACTS}}
 - **Reference (stable)**: {{INPUT_REFERENCE_DOCS}}
 
+## Recommended Skills
+{{RECOMMENDED_SKILLS}}
+
 ## Process
 1. {{STEP_1}}
 2. {{STEP_2}}

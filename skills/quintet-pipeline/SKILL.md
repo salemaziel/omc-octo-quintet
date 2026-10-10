@@ -2,7 +2,7 @@
 name: quintet-pipeline
 description: Orchestrate multi-stage AI workflows using Interpretable Context Methodology (ICM) staged folder pipelines with human check gates and edit surfaces. Use when executing complex compound workflows (e.g. debate -> spec -> worktree implementation -> review -> verify) or two-phase review-and-fix tasks where humans must review intermediate outputs.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   category: multi-agent-orchestration
   tags: quintet, icm, pipeline, staged-folders, human-in-the-loop, walk-test
 ---

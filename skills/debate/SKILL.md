@@ -2,7 +2,7 @@
 name: debate
 description: Quick-action skill to run a two-round cross-model debate across ready AI provider CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode) and synthesize a converged verdict. Use when resolving contested decisions via /debate.
 metadata:
-  version: 0.3.0
+  version: 0.4.0
   category: multi-agent-orchestration
   tags: quintet, debate, cross-critique, multi-model, architecture
 ---
