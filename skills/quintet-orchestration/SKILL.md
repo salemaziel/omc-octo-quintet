@@ -9,13 +9,14 @@ Quintet drives six coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `q
 
 **This skill is the router.** It does exactly four things: check readiness, classify the request (edits vs opinions), pick the mode, and hand off to the skill that owns the procedure. It does **not** run the launch/monitor/verify loop, the debate rounds, or the synthesis — those belong to the procedure skills. Keeping that boundary clean is the entire point of having a router.
 
-The three execution modes it routes to:
+The execution modes it routes to:
 
 | Mode | What it is | Best for | Owner skill |
 | --- | --- | --- | --- |
 | **fleet** | one prompt fanned out headless, read-only, with circuit-breaker + fallback | getting many perspectives | `quintet-fleet-dispatch` |
 | **team** | long-lived tmux workers sharing one cwd, editing files | parallel work, shared dir | `quintet-team-runtime` |
 | **headless-worktrees** | non-interactive workers, one git worktree each, then merged | parallel edits that must not collide | `quintet-headless-worktrees` |
+| **pipeline** | ICM numbered stage folders with human check gates and edit surfaces | compound debate-to-build, review-and-fix | `quintet-pipeline` |
 
 ## When to use
 
@@ -61,6 +62,7 @@ The single question that resolves almost every routing decision: **does the requ
 | Multi-model code review of a diff/file | **fleet** (review) | `quintet review "<target>" [providers]` |
 | Parallel implementation in a shared cwd (interactive) | **team** | `quintet team <spec> "<task>" --tasks "...||..."` |
 | Parallel edits that must NOT collide (isolated, merged) | **headless-worktrees** | see `quintet-headless-worktrees` |
+| Multi-stage workflow with human check gates | **pipeline** | `quintet pipeline init <name> --template debate-build` |
 
 Edits → team or headless-worktrees. Opinions, decisions, reviews → fleet. Within "edits," pick by **isolation need**: if workers can safely share one directory, **team** (tmux REPL) is simplest; if they would clobber each other, must merge cleanly, or you want to avoid the interactive REPL warmup-swallow, use **headless-worktrees**.
 

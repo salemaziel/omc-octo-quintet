@@ -27,6 +27,7 @@ source "${QUINTET_ROOT}/lib/worktrees.sh"
 source "${QUINTET_ROOT}/lib/fleet.sh"
 source "${QUINTET_ROOT}/lib/handoff.sh"
 source "${QUINTET_ROOT}/lib/prune.sh"
+source "${QUINTET_ROOT}/lib/icm.sh"
 
 VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.2.0")"
 
@@ -97,6 +98,13 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
 HANDOFF AUTOMATION (two-phase review -> team/worktrees):
   quintet handoff review <review.json|-> [--spec SPEC] [--mode team|worktrees] [--name NAME]
                          [--min-severity med] [--run]
+
+ICM PIPELINES & AUDITING (Interpretable Context Methodology):
+  quintet pipeline init <name> [--template debate-build|review-fix] [--goal GOAL]
+  quintet pipeline status <name>
+  quintet pipeline advance <name> [--auto]
+  quintet pipeline list
+  quintet walk <team|pipeline|dir>       # cold-agent Walk Test on contracts & state
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq
@@ -183,6 +191,17 @@ main() {
                 ""|--help|-h) usage ;;
                 *) die "handoff: unknown handoff type '$sub' (use: quintet handoff review ...)" ;;
             esac ;;
+        pipeline)
+            local sub="${1:-}"
+            case "$sub" in
+                init)    shift; quintet_pipeline_init "$@" ;;
+                status)  shift; quintet_pipeline_status "$@" ;;
+                advance) shift; quintet_pipeline_advance "$@" ;;
+                list)    shift; quintet_pipeline_list ;;
+                ""|--help|-h) usage ;;
+                *) die "pipeline: unknown subcommand '$sub' (use: init, status, advance, list)" ;;
+            esac ;;
+        walk)          quintet_walk "$@" ;;
         doctor)        cmd_doctor ;;
         providers)     cmd_providers ;;
         roles)         quintet_role_list "$@" ;;

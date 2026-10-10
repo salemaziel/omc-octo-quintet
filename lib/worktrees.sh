@@ -184,21 +184,28 @@ quintet_worktrees_start() {
         ensure_parent "$wdir"
         git worktree add -b "$wbranch" "$wdir" "$base_sha" >/dev/null 2>&1 || die "failed to create git worktree at $wdir"
 
-        # Exclude worker scaffolding from git tracking
+        # Exclude worker scaffolding and ICM artifacts from git tracking
         local exclude_file="${repo_root}/.git/info/exclude"
         if [[ -f "$exclude_file" ]]; then
-            for ef in ".brief.txt" ".agent.log" ".agent.pid" ".run.sh" ".exit_code"; do
+            for ef in ".brief.txt" ".agent.log" ".agent.pid" ".run.sh" ".exit_code" "status" "output" "CONTEXT.md"; do
                 grep -qxF "$ef" "$exclude_file" 2>/dev/null || echo "$ef" >> "$exclude_file"
             done
         fi
 
-        # Prepare brief file
+        # Prepare ICM stage contract and brief file
+        local contract_file="${wdir}/CONTEXT.md"
+        local status_file="${wdir}/status"
+        echo "working" > "$status_file"
+        ensure_dir "${wdir}/output"
+        quintet_icm_write_worker_contract "$contract_file" "$wname" "$prov" "$role" "$task" "$wtask" "status" "output"
+
         brief_file="${wdir}/.brief.txt"
         {
             echo "# Work Assignment for $wname"
             echo "Team: $name"
             echo "Shared Goal: $task"
             echo "Your Assignment: $wtask"
+            echo "Stage Contract: CONTEXT.md"
             echo
             if [[ "$role" != "stock" ]]; then
                 echo "## Role Instructions"
@@ -206,9 +213,11 @@ quintet_worktrees_start() {
                 echo
             fi
             echo "## Instructions"
-            echo "1. Implement your assigned changes in this isolated worktree."
-            echo "2. Do not touch or edit files outside your assignment scope."
-            echo "3. When changes are complete, ensure code compiles/passes checks."
+            echo "1. Read CONTEXT.md for detailed input/output contracts and boundaries."
+            echo "2. Implement your assigned changes in this isolated worktree."
+            echo "3. Do not touch or edit files outside your assignment scope."
+            echo "4. When changes are complete, ensure code compiles/passes checks."
+            echo "5. Record completion by writing 'done' to status file."
         } > "$brief_file"
 
         # Formulate execution command
@@ -216,7 +225,7 @@ quintet_worktrees_start() {
 
         if [[ "$no_tmux" != true ]]; then
             local run_script="${wdir}/.run.sh"
-            printf '#!/usr/bin/env bash\ncd %q || exit 1\necho "[%s] starting..."\n%s 2>&1 | tee .agent.log\nrc=$?\necho "[%s] finished with exit code $rc"\nexit $rc\n' \
+            printf '#!/usr/bin/env bash\ncd %q || exit 1\necho "[%s] starting..."\n%s 2>&1 | tee .agent.log\nrc=$?\necho $rc > .exit_code\n[[ $rc -eq 0 ]] && echo "done" > status || echo "failed" > status\necho "[%s] finished with exit code $rc"\nexit $rc\n' \
                 "$wdir" "$wname" "$cmd" "$wname" > "$run_script"
             chmod +x "$run_script"
 
@@ -226,7 +235,9 @@ quintet_worktrees_start() {
             (
                 cd "$wdir" || exit 1
                 eval "$cmd" > .agent.log 2>&1
-                echo $? > .exit_code
+                rc=$?
+                echo "$rc" > .exit_code
+                [[ $rc -eq 0 ]] && echo "done" > status || echo "failed" > status
             ) &
             echo $! > "${wdir}/.agent.pid"
         fi
@@ -278,7 +289,15 @@ quintet_worktrees_status() {
         wname="$(basename "$wdir")"
         if [[ -d "$wdir" ]]; then
             chg="$(cd "$wdir" && git status --porcelain 2>/dev/null | wc -l)"
-            if [[ -f "${wdir}/.agent.pid" ]]; then
+            prov="-"
+            role="-"
+            if [[ "$wname" =~ ^w[0-9]+-([^-]+)(-(.+))?$ ]]; then
+                prov="${BASH_REMATCH[1]}"
+                role="${BASH_REMATCH[3]:-stock}"
+            fi
+            if [[ -f "${wdir}/status" ]]; then
+                st="$(cat "${wdir}/status" 2>/dev/null | tr -d '[:space:]')"
+            elif [[ -f "${wdir}/.agent.pid" ]]; then
                 if kill -0 "$(cat "${wdir}/.agent.pid" 2>/dev/null)" 2>/dev/null; then
                     st="running (pid $(cat "${wdir}/.agent.pid"))"
                 else
@@ -289,7 +308,7 @@ quintet_worktrees_status() {
             else
                 st="idle"
             fi
-            printf '%-20s %-12s %-10s %-12s %s\n' "$wname" "-" "-" "${chg} files" "$st"
+            printf '%-20s %-12s %-10s %-12s %s\n' "$wname" "$prov" "$role" "${chg} files" "$st"
         fi
     done
 }

@@ -13,6 +13,11 @@ if ! declare -f quintet_role_exists >/dev/null 2>&1; then
     source "${QUINTET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/lib/roles.sh"
 fi
 
+if ! declare -f quintet_icm_init_worker >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "${QUINTET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/lib/icm.sh"
+fi
+
 _quintet_team_dir() { echo "${QUINTET_STATE_DIR}/teams/$1"; }
 
 # Parse a team spec like "2:claude,1:qwen,1:copilot" or "1:codex:implementer,1:agy:stock"
@@ -285,13 +290,18 @@ quintet_team_start() {
 "
         fi
 
+        # Initialize ICM worker contract and filesystem state machine
+        local contract_file
+        contract_file="$(quintet_icm_init_worker "$tdir" "$worker_name" "$provider" "$role" "$task" "$wtask")"
+
         # The full instruction injected into the agent REPL.
         local injected
         injected="${role_block}You are ${worker_name}, a worker in quintet team '${name}' (role: ${role}). Working dir: ${cwd}. \
 Shared team goal: ${task} \
 Your assignment: ${wtask} \
+Your full stage contract is at: ${contract_file} \
 Coordinate by appending status to ${board} (one line, prefixed with [${worker_name}]). \
-Avoid editing files another worker owns. When done, write a final [${worker_name}] DONE line to the taskboard."
+Avoid editing files another worker owns. When done, write 'done' to ${tdir}/workers/${worker_name}/status and a final [${worker_name}] DONE line to the taskboard."
 
         log INFO "spawning $worker_name ($(quintet_provider_emoji "$provider") $provider, role: $role)"
         local envf="${envdir}/${worker_name}.env"
@@ -618,6 +628,10 @@ quintet_team_status() {
             [[ -z "$e" ]] && continue
             printf '%s\n' "${windows[@]}" | grep -Fxq -- "$e" || { bad=1; printf '  • %-18s ❌ MISSING (in team.json, no window)\n' "$e"; }
         done <<< "$expected"
+    fi
+    if [[ -d "${tdir}/workers" ]]; then
+        echo "Workers (Filesystem State Machine):"
+        quintet_icm_list_workers_status "$tdir" || true
     fi
     if [[ -f "${tdir}/taskboard.md" ]]; then
         echo "Taskboard tail:"

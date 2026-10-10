@@ -257,3 +257,6 @@ now_iso()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # ensure_dir <dir> — mkdir -p with a clear error.
 ensure_dir() { mkdir -p "$1" 2>/dev/null || die "cannot create dir: $1"; }
+
+# ensure_parent <file_or_dir> — ensure parent directory exists.
+ensure_parent() { ensure_dir "$(dirname "$1")"; }

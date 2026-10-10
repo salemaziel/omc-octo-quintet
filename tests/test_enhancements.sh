@@ -234,6 +234,98 @@ else
     bad "worktrees: cleanup failed after merge"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+echo "── 5. Interpretable Context Methodology (ICM) & Walk Test ──"
+
+# Test ICM Worker Contract Generation
+TEST_WDIR=$(mktemp -d "/tmp/quintet-test-icm-worker-XXXXXX")
+TEST_CONTRACT="${TEST_WDIR}/CONTEXT.md"
+TEST_STATUS="${TEST_WDIR}/status"
+TEST_OUTDIR="${TEST_WDIR}/output"
+
+"$BIN" walk non_existent_target >/dev/null 2>&1 || true
+
+(
+    source "$ROOT/lib/icm.sh"
+    quintet_icm_write_worker_contract "$TEST_CONTRACT" "w1-codex" "codex" "implementer" \
+        "Build auth system" "Implement JWT tokens" "$TEST_STATUS" "$TEST_OUTDIR" "src/auth/*.ts" "requirements.md"
+
+    if [[ -f "$TEST_CONTRACT" ]] && grep -q "## Inputs" "$TEST_CONTRACT" && grep -q "## Human Check" "$TEST_CONTRACT"; then
+        ok "icm: worker stage contract (CONTEXT.md) generated with all required sections"
+    else
+        bad "icm: worker contract generation failed"
+    fi
+
+    # Token / Size Discipline Check
+    c_bytes="$(wc -c < "$TEST_CONTRACT")"
+    if [[ "$c_bytes" -lt 8192 ]]; then
+        ok "icm: worker contract satisfies token discipline (${c_bytes} bytes < 8 KB)"
+    else
+        bad "icm: worker contract exceeds token envelope (${c_bytes} bytes)"
+    fi
+)
+
+# Test ICM Pipeline Lifecycle (init, status, advance, walk)
+PIPE_NAME="test-pipe-$$"
+out_pipe_init="$("$BIN" pipeline init "$PIPE_NAME" --template debate-build --goal "Build caching layer")"
+if echo "$out_pipe_init" | grep -q "Pipeline initialized"; then
+    ok "icm: pipeline init scaffolds numbered stages and root CONTEXT.md"
+else
+    bad "icm: pipeline init failed"
+fi
+
+    PIPE_STATE_DIR="${QUINTET_STATE_DIR:-${PWD}/.quintet}"
+    PIPE_DIR="${PIPE_STATE_DIR}/pipelines/${PIPE_NAME}"
+    if [[ -f "${PIPE_DIR}/stages/01_debate/CONTEXT.md" ]] && [[ -f "${PIPE_DIR}/stages/02_spec/CONTEXT.md" ]]; then
+        ok "icm: stage contracts exist for numbered stages"
+    else
+        bad "icm: missing stage contracts"
+    fi
+
+    out_pipe_status="$("$BIN" pipeline status "$PIPE_NAME")"
+    if echo "$out_pipe_status" | grep -q "01_debate" && echo "$out_pipe_status" | grep -q "02_spec"; then
+        ok "icm: pipeline status reports numbered stages and artifacts"
+    else
+        bad "icm: pipeline status failed"
+    fi
+
+    out_pipe_adv="$("$BIN" pipeline advance "$PIPE_NAME")"
+    if echo "$out_pipe_adv" | grep -q "Current active stage: 01_debate"; then
+        ok "icm: pipeline advance identifies current active stage"
+    else
+        bad "icm: pipeline advance failed"
+    fi
+
+    # Simulate stage 1 artifact output (every output is an edit surface)
+    echo "Consensus: Redis-backed distributed cache" > "${PIPE_DIR}/stages/01_debate/output/consensus.md"
+
+    out_pipe_adv2="$("$BIN" pipeline advance "$PIPE_NAME" --auto)"
+    if echo "$out_pipe_adv2" | grep -q "Current active stage: 02_spec"; then
+        ok "icm: pipeline advances to stage 02 upon artifact completion"
+    else
+        bad "icm: pipeline advance to stage 02 failed"
+    fi
+
+    # Test ICM Walk Test
+    out_walk="$("$BIN" walk "$PIPE_NAME")"
+    if echo "$out_walk" | grep -q "passed the ICM Walk Test"; then
+        ok "icm: walk test passes cold-agent auditability checks"
+    else
+        bad "icm: walk test failed: $out_walk"
+    fi
+
+    # Test Review Handoff to Pipeline Mode
+    review_json='[{"provider":"claude","status":"0:ok","verdict":"changes_requested","findings":[{"file":"src/cache.ts","line":12,"severity":"high","message":"Unbounded key expiration"}]}]'
+    out_handoff_pipe="$(printf '%s' "$review_json" | "$BIN" handoff review - --pipeline --name "pipe-rev-$$" --run)"
+    if echo "$out_handoff_pipe" | grep -q "Review findings staged to"; then
+        ok "handoff: --pipeline stages review findings as editable input for remediation"
+    else
+        bad "handoff: --pipeline mode failed"
+    fi
+
+    # Cleanup test pipeline directories
+    rm -rf "$TEST_WDIR" "$PIPE_DIR" "${PIPE_STATE_DIR}/pipelines/pipe-rev-$$"
+
 echo
 echo "=== Test Results: ${PASS} passed, ${FAIL} failed ==="
 if [[ "$FAIL" -eq 0 ]]; then

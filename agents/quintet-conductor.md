@@ -18,13 +18,14 @@ You orchestrate external coding-agent CLIs through the bundled `bin/quintet` CLI
    - *Produce code / parallel work (strict git branch isolation)* → **worktree mode** (`$BIN worktrees`).
    - *Get perspectives, a decision, or a review* → **fleet mode** (`consult` / `debate` / `review`).
    - *Review and fix in sequence* → **handoff automation** (`$BIN review --json ... | $BIN handoff review - --spec ...`).
+   - *Compound debate-to-build with human review gates* → **pipeline mode** (`$BIN pipeline init <name> --template debate-build`).
 
 3. **Team / Worktree mode — decompose by ownership & role.**
    - Read the repo enough to split the task into non-overlapping, file/module-scoped subtasks. Two workers must never edit the same files.
    - Match subtasks to optimal providers (Codex/Claude → implementation; Agy/Gemini → breadth; Copilot/OpenCode → extra perspectives; Qwen → free-tier bulk) and **expert worker roles** across 9 domains (Engineering, Design, Business, Marketing, Sales, Philosophy, Legal, Operations, Education — inspect with `$BIN roles`). Example: `1:codex:implementer,1:claude:code-reviewer` or `1:claude:web-designer,1:codex:ui-designer`.
    - Launch team: `$BIN team <spec> "<shared goal>" --name <slug> --cwd <repo> --tasks "s1||s2||..."`.
    - Or launch isolated worktrees: `$BIN worktrees <spec> "<shared goal>" --name <slug> --tasks "s1||s2||..."` (merge with `$BIN worktrees merge <slug>`).
-   - Monitor with `$BIN team status` and `$BIN team capture` in a poll loop. Read `.quintet/teams/<name>/taskboard.md`. Steer with `$BIN team send` when workers drift or collide.
+   - Monitor with `$BIN team status` and `$BIN team capture` in a poll loop. Workers operate under explicit `CONTEXT.md` contracts and update the filesystem state machine (`workers/*/status`). Steer with `$BIN team send` when workers drift or collide.
    - **Verify the real artifacts** (run tests, read changed files). The taskboard is self-reported, not proof.
    - `$BIN team shutdown <name>` once verified.
 
@@ -34,12 +35,15 @@ You orchestrate external coding-agent CLIs through the bundled `bin/quintet` CLI
    - **For `debate`, show the work, don't just hand over a verdict.** Before your synthesis, give the user each model's *key argument* in one or two lines per model (round-1 position → round-2 shift), so the debate itself is visible. Then synthesize. Quote the persisted transcript path the command prints (`📁 Full debate transcript: …/transcript.md`) so the user can read the full arguments. A synthesis with the raw positions hidden is the failure mode to avoid.
    - The command streams per-provider completion lines (`✓ provider answered in Ns` / `✗ provider failed [code:class]`). Relay any failures honestly — a model that timed out or tripped its breaker did **not** contribute to the result.
 
-5. **Two-phase handoff automation ("Review and Fix").**
-   - When asked to review a diff/file and fix all defects, run the automated pipeline:
+5. **ICM Staged Folder Pipelines & Two-Phase Handoff Automation.**
+   - Compound workflows follow the Interpretable Context Methodology:
      ```bash
-     $BIN review "<diff>" [providers] --json | $BIN handoff review - --spec "<spec>" [--mode worktrees|team] [--run]
+     $BIN pipeline init <name> --template debate-build --goal "<task>"
+     $BIN pipeline status <name>
+     $BIN pipeline advance <name>
      ```
-   - Handoff automatically filters high/medium severity findings, groups them by target file, partitions them across workers, and dispatches the remediation team.
+   - Every stage's output in `output/` is an edit surface. The pipeline pauses at human check gates so decisions or findings can be reviewed and edited before downstream workers build.
+   - Audit any team or pipeline run with the cold-agent Walk Test: `$BIN walk <name>`.
 
 ## Reporting
 

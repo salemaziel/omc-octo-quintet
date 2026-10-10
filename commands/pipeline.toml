@@ -1,0 +1,19 @@
+description = "Run an Interpretable Context Methodology (ICM) staged folder pipeline with human check gates."
+
+prompt = """
+The user wants to manage or execute an ICM pipeline for: {{args}}
+
+The bundled CLI is at `~/.gemini/config/plugins/quintet/bin/quintet` (or `~/.gemini/extensions/quintet/bin/quintet`, fall back to `quintet` on PATH). Use it as `$QBIN` throughout:
+
+1. Resolve binary: `QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet`
+2. Staged folder pipelines enforce the 5 ICM principles:
+   - Stage sequencing via numbered folders (`01_`, `02_`)
+   - Stage contracts in `CONTEXT.md` (Inputs, Process, Outputs, Human Check)
+   - Every output in `output/` is an edit surface for humans
+   - Filesystem is the state machine
+3. Manage pipeline:
+   - Initialize: `$QBIN pipeline init <name> [--template debate-build|review-fix] [--goal "<goal>"]`
+   - Progress: `$QBIN pipeline status <name>`
+   - Advance: `$QBIN pipeline advance <name>` (inspect output artifacts before confirming)
+   - Audit / Walk Test: `$QBIN walk <name>`
+"""

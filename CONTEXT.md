@@ -15,11 +15,13 @@ Quintet is the unified multi-agent orchestrator plugin and CLI for AI coding age
 - **`lib/worktrees.sh`**: Headless git worktree runtime (`quintet worktrees`) for parallel branch isolation and automated merges.
 - **`lib/fleet.sh`**: One-shot parallel fleet execution (tmux-by-default with fallback) with consensus synthesis, debate rounds, and diff reviews.
 - **`lib/handoff.sh`**: Two-phase review-to-team handoff pipeline automation (`quintet handoff review`).
+- **`lib/icm.sh`**: Interpretable Context Methodology runtime (`quintet pipeline`, `quintet walk`, worker stage contracts, filesystem state machines).
 - **`lib/prune.sh`**: State retention & garbage collection (`quintet prune`) for stale teams and debate archives.
 - **`lib/reliability.sh`**: Circuit breaker and automatic fallback routing.
 - **`lib/tmux.sh`**: Low-level tmux window/pane management and key injection.
+- **`templates/icm/`**: Reusable templates for worker stage contracts and multi-stage pipeline stages.
 - **`roles/`**: 49 expert subagent role definitions across 9 domains (Engineering, Design, Business, Marketing, Sales, Philosophy, Legal, Operations, Education), plus `stock` baseline. Categorized into subdirectories with top-level backwards-compatible symlinks.
-- **`skills/`**: Agent skills for orchestration, team runtime, fleet dispatch, reviews, consults, debates, and doctor readiness.
+- **`skills/`**: Agent skills for orchestration, team runtime, fleet dispatch, reviews, consults, debates, doctor readiness, and ICM pipelines (`skills/pipeline`, `skills/quintet-pipeline`).
 - **`commands/`**: Slash commands and TOML templates for Claude, Codex, Gemini/AGY, and Copilot.
 - **`tests/smoke.sh`**: Heavyweight manual tmux integration test harness. **Do NOT run automatically** — only run if the user explicitly requests running smoke tests.
 

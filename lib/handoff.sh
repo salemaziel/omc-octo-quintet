@@ -28,6 +28,7 @@ quintet_handoff_review() {
             -)              [[ -z "$input_src" ]] && input_src="$1" || die "handoff review: unexpected arg '$1'"; shift ;;
             --spec)         need_arg "$1" $#; spec="$2"; shift 2 ;;
             --mode)         need_arg "$1" $#; mode="$2"; shift 2 ;;
+            --pipeline)     mode="pipeline"; shift ;;
             --name)         need_arg "$1" $#; name="$2"; shift 2 ;;
             --min-severity) need_arg "$1" $#; min_sev="$2"; shift 2 ;;
             --run)          do_run=true; shift ;;
@@ -147,7 +148,9 @@ quintet_handoff_review() {
     # Assemble CLI command
     local cmd_bin="${QBIN:-quintet}"
     local full_cmd
-    if [[ "$mode" == "worktrees" ]]; then
+    if [[ "$mode" == "pipeline" ]]; then
+        full_cmd=("$cmd_bin" pipeline init "$name" --template review-fix --goal "Fix review findings across ${#unique_files[@]} files")
+    elif [[ "$mode" == "worktrees" ]]; then
         full_cmd=("$cmd_bin" worktrees "$spec" "Fix review findings across ${#unique_files[@]} files" --name "$name" --tasks "$tasks_arg")
     else
         full_cmd=("$cmd_bin" team "$spec" "Fix review findings across ${#unique_files[@]} files" --name "$name" --tasks "$tasks_arg")
@@ -160,7 +163,13 @@ quintet_handoff_review() {
 
     if [[ "$do_run" == true ]]; then
         echo "Executing remediation dispatch..."
-        if [[ "$mode" == "worktrees" ]]; then
+        if [[ "$mode" == "pipeline" ]]; then
+            local pdir="${QUINTET_STATE_DIR}/pipelines/${name}"
+            quintet_pipeline_init "$name" --template review-fix --goal "Fix review findings across ${#unique_files[@]} files"
+            echo "$raw_json" > "${pdir}/stages/01_review/output/findings.json"
+            echo "✅ Review findings staged to ${pdir}/stages/01_review/output/findings.json"
+            echo "Human Check Gate: inspect and edit findings before running: quintet pipeline advance ${name}"
+        elif [[ "$mode" == "worktrees" ]]; then
             quintet_worktrees_start "$spec" "Fix review findings across ${#unique_files[@]} files" --name "$name" --tasks "$tasks_arg"
         else
             quintet_team_start "$spec" "Fix review findings across ${#unique_files[@]} files" --name "$name" --tasks "$tasks_arg"
