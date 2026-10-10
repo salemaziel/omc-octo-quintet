@@ -184,6 +184,14 @@ quintet_worktrees_start() {
         ensure_parent "$wdir"
         git worktree add -b "$wbranch" "$wdir" "$base_sha" >/dev/null 2>&1 || die "failed to create git worktree at $wdir"
 
+        # Exclude worker scaffolding from git tracking
+        local exclude_file="${repo_root}/.git/info/exclude"
+        if [[ -f "$exclude_file" ]]; then
+            for ef in ".brief.txt" ".agent.log" ".agent.pid" ".run.sh" ".exit_code"; do
+                grep -qxF "$ef" "$exclude_file" 2>/dev/null || echo "$ef" >> "$exclude_file"
+            done
+        fi
+
         # Prepare brief file
         brief_file="${wdir}/.brief.txt"
         {
@@ -317,6 +325,8 @@ quintet_worktrees_merge() {
         wname="$(basename "$wdir")"
         (
             cd "$wdir" || exit 1
+            git rm -f --cached .brief.txt .agent.log .agent.pid .run.sh .exit_code 2>/dev/null || true
+            rm -f -- .brief.txt .agent.log .agent.pid .run.sh .exit_code
             if [[ -n "$(git status --porcelain)" ]]; then
                 git add -A
                 git commit -m "quintet($name): edits from worker $wname" >/dev/null 2>&1

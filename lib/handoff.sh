@@ -145,7 +145,7 @@ quintet_handoff_review() {
     name="$(slugify "$name")"
 
     # Assemble CLI command
-    local cmd_bin="quintet"
+    local cmd_bin="${QBIN:-quintet}"
     local full_cmd
     if [[ "$mode" == "worktrees" ]]; then
         full_cmd=("$cmd_bin" worktrees "$spec" "Fix review findings across ${#unique_files[@]} files" --name "$name" --tasks "$tasks_arg")
