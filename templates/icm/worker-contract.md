@@ -8,7 +8,8 @@ One job: {{SUBTASK}}
 - **Assigned Role**: {{ROLE}}
 - **Team Goal**: {{GOAL}}
 
-## Recommended Skills
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, invoke or reference these skills. If not installed or if external helper scripts are unavailable, embody the underlying methodology directly using standard repository tools.
 {{RECOMMENDED_SKILLS}}
 
 ## Inputs

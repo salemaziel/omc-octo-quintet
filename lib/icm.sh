@@ -49,7 +49,8 @@ One job: ${subtask}
 - **Assigned Role**: ${role}
 - **Team Goal**: ${goal}
 
-## Recommended Skills
+## Recommended Skills & Disciplines
+> **Advisory**: These skills represent recommended engineering/design disciplines for this role. If an enumerated skill is installed in your agent environment, invoke or reference it. If not installed (or if external helper scripts are not present in the workspace), embody the underlying methodology directly using standard repository tools without failing or stalling.
 ${skills:-"- None specified (operate under standard role guidelines)"}
 
 ## Inputs

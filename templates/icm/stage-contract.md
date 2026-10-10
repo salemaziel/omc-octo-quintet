@@ -6,7 +6,8 @@ One job: {{STAGE_PURPOSE}}
 - **Working (this run)**: {{INPUT_WORKING_ARTIFACTS}}
 - **Reference (stable)**: {{INPUT_REFERENCE_DOCS}}
 
-## Recommended Skills
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference these skills. If not installed, embody the underlying discipline directly.
 {{RECOMMENDED_SKILLS}}
 
 ## Process
