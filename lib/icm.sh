@@ -331,6 +331,12 @@ One job: review the target diff or files across multiple provider CLIs.
 - **Working (this run)**: target git diff or source files
 - **Reference (stable)**: quintet review severity guidelines
 
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`code-review-preshipment\`
+- \`adversarial-reviewer\`
+- \`differential-review\`
+
 ## Process
 1. Execute multi-model fleet review: 'quintet review "<target>" --json > output/findings.json'.
 2. Record unparsed logs or observations in 'output/review_summary.md'.
@@ -353,6 +359,12 @@ One job: filter approved findings and partition them across worker seats.
 ## Inputs
 - **Working (this run)**: ../01_review/output/findings.json
 - **Reference (stable)**: _shared/roles.md
+
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`icm-architect\`
+- \`agent-workflow-designer\`
+- \`architecture-reviewer\`
 
 ## Process
 1. Ingest approved findings from Stage 01.
@@ -377,6 +389,13 @@ One job: dispatch workers in headless worktrees or tmux to fix assigned findings
 - **Working (this run)**: ../02_triage/output/assignments.json
 - **Reference (stable)**: Assigned worker role definitions
 
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`clean-code\`
+- \`tdd-guide\`
+- \`dev-verify\`
+- \`systematic-debugging\`
+
 ## Process
 1. Spawn worktrees or team with disjoint assignments.
 2. Monitor workers until completion.
@@ -400,6 +419,12 @@ One job: run automated test suites on the integrated changes.
 ## Inputs
 - **Working (this run)**: merged worker branch
 - **Reference (stable)**: test suite command
+
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`dev-verify\`
+- \`mutation-testing\`
+- \`pre-landing-review\`
 
 ## Process
 1. Merge worker branches into integration candidate.
@@ -427,6 +452,12 @@ One job: debate architectural approaches across heterogeneous models.
 - **Working (this run)**: Architecture question or problem statement: ${goal}
 - **Reference (stable)**: _shared/architecture-principles.md
 
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`software-design-philosophy\`
+- \`c4-architecture\`
+- \`domain-driven-design\`
+
 ## Process
 1. Run multi-model debate: 'quintet debate "<question>"'.
 2. Record consensus points and disagreements in 'output/consensus.md'.
@@ -449,6 +480,12 @@ One job: decompose the chosen architecture into disjoint, file-scoped subtasks.
 ## Inputs
 - **Working (this run)**: ../01_debate/output/consensus.md
 - **Reference (stable)**: _shared/contracts-template.md
+
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`icm-architect\`
+- \`agent-workflow-designer\`
+- \`code-to-prd\`
 
 ## Process
 1. Break goal into non-overlapping subtasks (max 10).
@@ -474,6 +511,12 @@ One job: execute subtasks in parallel using Quintet workers.
 - **Working (this run)**: ../02_spec/output/spec.json
 - **Reference (stable)**: Assigned worker roles
 
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`clean-code\`
+- \`tdd-guide\`
+- \`dev-verify\`
+
 ## Process
 1. Launch workers via 'quintet worktrees start' or 'quintet team start'.
 2. Monitor filesystem state machine until all workers report 'done'.
@@ -497,6 +540,12 @@ One job: review implementation diffs for defects, edge cases, and regressions.
 ## Inputs
 - **Working (this run)**: git diff of implemented changes
 - **Reference (stable)**: Project quality standards
+
+## Recommended Skills & Disciplines
+> **Advisory**: If available in your environment, reference or invoke these skills. If not installed, embody the underlying discipline directly using standard project tools.
+- \`code-review-preshipment\`
+- \`adversarial-reviewer\`
+- \`differential-review\`
 
 ## Process
 1. Run 'quintet review' on implementation diffs.

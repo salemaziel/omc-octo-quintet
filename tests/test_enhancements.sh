@@ -61,10 +61,10 @@ fi
 
 # Role Taxonomy Verification
 role_count="$("$BIN" roles --plain | wc -l)"
-if [[ "$role_count" -eq 50 ]]; then
-    ok "roles: master taxonomy exports 50 roles (stock + 49 expert personas)"
+if [[ "$role_count" -eq 56 ]]; then
+    ok "roles: master taxonomy exports 56 roles (stock + 55 expert personas)"
 else
-    bad "roles: expected 50 roles, got $role_count"
+    bad "roles: expected 56 roles, got $role_count"
 fi
 
 if "$BIN" roles education | grep "ai-tutor-architect" >/dev/null && "$BIN" roles design | grep "web-designer" >/dev/null; then

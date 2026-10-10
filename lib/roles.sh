@@ -306,7 +306,7 @@ quintet_role_skills() {
                     s="${s%\"}"
                     s="${s%\'}"
                     echo "- \`$s\`"
-                elif [[ "$line" =~ ^[A-Za-z0-9_]+: ]]; then
+                elif [[ "$line" =~ ^[A-Za-z0-9_-]+: ]]; then
                     in_skills=0
                 fi
             fi
