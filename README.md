@@ -104,7 +104,7 @@ quintet review "$(git diff HEAD~1)" claude,agy --json | \
 # Maintenance & diagnostics
 quintet doctor       # provider/tmux/jq readiness
 quintet providers    # per-provider install/auth/ready
-quintet roles        # list available subagent worker roles
+quintet roles        # list 49 expert roles across 9 domains (or: quintet roles <category>)
 quintet prune        # prune stale team states & debate archives [--days N] [--dry-run]
 ```
 
@@ -163,7 +163,7 @@ lib/tmux.sh            detached-session / window / send-keys / capture helpers
 lib/team.sh            persistent tmux worker-team runtime (N:provider:role:model, watchdog)
 lib/fleet.sh           one-shot parallel / consult / debate / review (tmux default)
 lib/prune.sh           state retention & garbage collection for stale teams & debate archives
-roles/                 specialized role prompts (implementer, reviewer, security, etc.)
+roles/                 49 expert role prompts across 9 domains (engineering, design, education, etc.)
 skills/                quintet-orchestration, quintet-team-runtime, quintet-fleet-dispatch
 agents/                quintet-conductor
 commands/              /quintet:{team,fleet,consult,debate,review,doctor}

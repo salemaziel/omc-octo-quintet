@@ -19,9 +19,9 @@ You orchestrate external coding-agent CLIs through the bundled `bin/quintet` CLI
    - *Get perspectives, a decision, or a review* → **fleet mode** (`consult` / `debate` / `review`).
    - *Review and fix in sequence* → **handoff automation** (`$BIN review --json ... | $BIN handoff review - --spec ...`).
 
-3. **Team / Worktree mode — decompose by ownership.**
+3. **Team / Worktree mode — decompose by ownership & role.**
    - Read the repo enough to split the task into non-overlapping, file/module-scoped subtasks. Two workers must never edit the same files.
-   - Map each subtask to the best provider (Codex/Claude → implementation; Agy/Gemini → breadth; Copilot/OpenCode → extra perspectives; Qwen → free-tier bulk) — canonical mapping in `skills/quintet-team-runtime/references/provider-strengths.md`.
+   - Match subtasks to optimal providers (Codex/Claude → implementation; Agy/Gemini → breadth; Copilot/OpenCode → extra perspectives; Qwen → free-tier bulk) and **expert worker roles** across 9 domains (Engineering, Design, Business, Marketing, Sales, Philosophy, Legal, Operations, Education — inspect with `$BIN roles`). Example: `1:codex:implementer,1:claude:code-reviewer` or `1:claude:web-designer,1:codex:ui-designer`.
    - Launch team: `$BIN team <spec> "<shared goal>" --name <slug> --cwd <repo> --tasks "s1||s2||..."`.
    - Or launch isolated worktrees: `$BIN worktrees <spec> "<shared goal>" --name <slug> --tasks "s1||s2||..."` (merge with `$BIN worktrees merge <slug>`).
    - Monitor with `$BIN team status` and `$BIN team capture` in a poll loop. Read `.quintet/teams/<name>/taskboard.md`. Steer with `$BIN team send` when workers drift or collide.

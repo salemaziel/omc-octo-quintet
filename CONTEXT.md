@@ -18,7 +18,7 @@ Quintet is the unified multi-agent orchestrator plugin and CLI for AI coding age
 - **`lib/prune.sh`**: State retention & garbage collection (`quintet prune`) for stale teams and debate archives.
 - **`lib/reliability.sh`**: Circuit breaker and automatic fallback routing.
 - **`lib/tmux.sh`**: Low-level tmux window/pane management and key injection.
-- **`roles/`**: Subagent role definitions (`implementer`, `code-reviewer`, `security-auditor`, `test-engineer`, `debugger`, `devops-troubleshooter`).
+- **`roles/`**: 49 expert subagent role definitions across 9 domains (Engineering, Design, Business, Marketing, Sales, Philosophy, Legal, Operations, Education), plus `stock` baseline. Categorized into subdirectories with top-level backwards-compatible symlinks.
 - **`skills/`**: Agent skills for orchestration, team runtime, fleet dispatch, reviews, consults, debates, and doctor readiness.
 - **`commands/`**: Slash commands and TOML templates for Claude, Codex, Gemini/AGY, and Copilot.
 - **`tests/smoke.sh`**: Heavyweight manual tmux integration test harness. **Do NOT run automatically** — only run if the user explicitly requests running smoke tests.

@@ -1,0 +1,1 @@
+philosophy/first-principles-analyst.md

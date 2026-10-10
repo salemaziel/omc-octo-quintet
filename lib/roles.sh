@@ -1,31 +1,176 @@
 #!/usr/bin/env bash
 # quintet/lib/roles.sh — subagent worker role registry and prompt loader.
-# Provides specialized role prompts for spawned worker agents or fleet members.
+# Provides specialized role prompts for spawned worker agents or fleet members across 9 domains:
+# Engineering, Design, Business, Marketing, Sales, Philosophy, Legal, Operations, Education.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Supported standard roles
+# Supported standard categories
+QUINTET_CATEGORIES=(
+    "engineering"
+    "design"
+    "business"
+    "marketing"
+    "sales"
+    "philosophy"
+    "legal"
+    "operations"
+    "education"
+)
+
+# Supported standard roles across all domains
 QUINTET_ROLES=(
+    # Engineering
+    "system-architect"
+    "api-designer"
     "implementer"
+    "refactoring-specialist"
     "code-reviewer"
-    "security-auditor"
     "test-engineer"
     "debugger"
+    "database-engineer"
+    "performance-engineer"
+    "security-auditor"
     "devops-troubleshooter"
+    "site-reliability-engineer"
+    "technical-writer"
+
+    # Design (inc. Web Design)
+    "web-designer"
+    "conversion-designer"
+    "ui-designer"
+    "design-system-architect"
+    "ux-architect"
+    "accessibility-specialist"
+    "ux-researcher"
+
+    # Business
+    "business-strategist"
+    "competitive-analyst"
+    "product-manager"
+    "pricing-strategist"
+
+    # Marketing
+    "brand-strategist"
+    "copywriter"
+    "technical-content-strategist"
+    "growth-engineer"
+    "seo-specialist"
+    "launch-strategist"
+
+    # Sales
+    "sales-engineer"
+    "outbound-strategist"
+    "deal-strategist"
+    "customer-success-lead"
+
+    # Philosophy
+    "first-principles-analyst"
+    "dialectical-challenger"
+    "tech-ethicist"
+    "unix-philosopher"
+
+    # Legal
+    "licensing-auditor"
+    "privacy-officer"
+    "policy-author"
+
+    # Operations
+    "workflow-orchestrator"
+    "knowledge-architect"
+
+    # Education
+    "learning-scientist"
+    "curriculum-architect"
+    "instructional-designer"
+    "metacognition-coach"
+    "inclusive-educator"
+    "ai-tutor-architect"
 )
 
 # Normalize role names and map common aliases
 quintet_normalize_role() {
+    local raw="$1"
+    # Reject directory traversal immediately
+    if [[ "$raw" == *".."* ]]; then
+        echo "$raw"
+        return 0
+    fi
+
     local r
-    r=$(printf '%s' "${1:-stock}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+    r=$(printf '%s' "${raw:-stock}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+    # Strip optional category prefix (e.g. 'marketing/copywriter' -> 'copywriter')
+    r="${r##*/}"
+
     case "$r" in
-        reviewer)                  echo "code-reviewer" ;;
-        test|tester)               echo "test-engineer" ;;
-        sec|security)              echo "security-auditor" ;;
-        debug)                     echo "debugger" ;;
-        devops)                    echo "devops-troubleshooter" ;;
-        impl)                      echo "implementer" ;;
-        "")                        echo "stock" ;;
-        *)                         echo "$r" ;;
+        # Engineering aliases
+        arch|architect)                                   echo "system-architect" ;;
+        api|interface-designer)                           echo "api-designer" ;;
+        impl)                                             echo "implementer" ;;
+        refactor|simplifier|cleaner)                      echo "refactoring-specialist" ;;
+        reviewer)                                         echo "code-reviewer" ;;
+        test|tester)                                      echo "test-engineer" ;;
+        debug)                                            echo "debugger" ;;
+        db|database|dba)                                  echo "database-engineer" ;;
+        perf|performance|optimizer)                       echo "performance-engineer" ;;
+        sec|security)                                     echo "security-auditor" ;;
+        devops)                                           echo "devops-troubleshooter" ;;
+        sre|observability)                                echo "site-reliability-engineer" ;;
+        docs|writer|tech-writer)                          echo "technical-writer" ;;
+
+        # Design aliases
+        webdesign|landing-designer)                       echo "web-designer" ;;
+        cro|cro-designer|funnel-designer)                 echo "conversion-designer" ;;
+        ui|component-designer)                            echo "ui-designer" ;;
+        design-tokens|token-architect)                    echo "design-system-architect" ;;
+        ux|interaction-designer)                          echo "ux-architect" ;;
+        a11y|accessibility)                               echo "accessibility-specialist" ;;
+        ux-research|user-researcher)                      echo "ux-researcher" ;;
+
+        # Business aliases
+        biz-strat|corporate-strategist)                   echo "business-strategist" ;;
+        comp-analyst|market-intelligence)                 echo "competitive-analyst" ;;
+        pm|product-strategist)                            echo "product-manager" ;;
+        pricing|monetization)                             echo "pricing-strategist" ;;
+
+        # Marketing aliases
+        brand|positioning)                                echo "brand-strategist" ;;
+        copy|content-writer)                              echo "copywriter" ;;
+        tech-marketer|devrel)                             echo "technical-content-strategist" ;;
+        growth|plg-strategist)                            echo "growth-engineer" ;;
+        seo|search-strategist)                            echo "seo-specialist" ;;
+        launch|pr-specialist)                             echo "launch-strategist" ;;
+
+        # Sales aliases
+        se|solutions-architect)                           echo "sales-engineer" ;;
+        sdr|pipeline-generator)                           echo "outbound-strategist" ;;
+        closer|commercial-negotiator)                     echo "deal-strategist" ;;
+        cs-lead|retention-strategist)                     echo "customer-success-lead" ;;
+
+        # Philosophy aliases
+        first-principles|epistemologist)                  echo "first-principles-analyst" ;;
+        devils-advocate|socratic-inquisitor)              echo "dialectical-challenger" ;;
+        ethicist|humane-tech)                             echo "tech-ethicist" ;;
+        minimalist|software-purist)                       echo "unix-philosopher" ;;
+
+        # Legal aliases
+        license-auditor|oss-compliance)                   echo "licensing-auditor" ;;
+        compliance-officer|privacy-auditor)               echo "privacy-officer" ;;
+        legal-writer|terms-counsel)                       echo "policy-author" ;;
+
+        # Operations aliases
+        agile-coach|scrum-master)                         echo "workflow-orchestrator" ;;
+        wiki-curator|ops-docs)                            echo "knowledge-architect" ;;
+
+        # Education aliases
+        cognitive-designer|memory-coach)                  echo "learning-scientist" ;;
+        curriculum-designer|ubd-designer)                 echo "curriculum-architect" ;;
+        pedagogical-coach|explicit-instructor)            echo "instructional-designer" ;;
+        srl-mentor|agency-coach)                          echo "metacognition-coach" ;;
+        udl-specialist|eal-specialist)                    echo "inclusive-educator" ;;
+        socratic-tutor|cognitive-tutor)                   echo "ai-tutor-architect" ;;
+
+        "")                                               echo "stock" ;;
+        *)                                                echo "$r" ;;
     esac
 }
 
@@ -35,36 +180,135 @@ _quintet_roles_dir() {
     echo "${QUINTET_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/roles"
 }
 
-# quintet_role_exists <role>
-# Returns 0 if role is "stock" or a plain name ([a-z0-9-]+) with a roles/<r>.md file.
-quintet_role_exists() {
+# quintet_role_file <role>
+# Returns 0 and prints full path to the role .md file if it exists.
+quintet_role_file() {
+    local raw="$1"
+    [[ "$raw" == *".."* ]] && return 1
+
     local r
-    r=$(quintet_normalize_role "$1")
+    r=$(quintet_normalize_role "$raw")
     [[ "$r" == "stock" ]] && return 0
     [[ "$r" =~ ^[a-z0-9-]+$ ]] || return 1
-    [[ -f "$(_quintet_roles_dir)/${r}.md" ]]
+
+    local rdir
+    rdir="$(_quintet_roles_dir)"
+
+    # 1. Direct path in roles/ (or top-level symlink)
+    if [[ -f "${rdir}/${r}.md" ]]; then
+        echo "${rdir}/${r}.md"
+        return 0
+    fi
+
+    # 2. Category subdirectory check
+    local found
+    found="$(find "$rdir" -mindepth 2 -maxdepth 2 -type f -name "${r}.md" 2>/dev/null | head -n 1)"
+    if [[ -n "$found" && -f "$found" ]]; then
+        echo "$found"
+        return 0
+    fi
+
+    return 1
+}
+
+# quintet_role_exists <role>
+# Returns 0 if role is "stock" or a plain name with an existing roles/<r>.md file.
+quintet_role_exists() {
+    local raw="$1"
+    [[ "$raw" == *".."* ]] && return 1
+
+    local r
+    r=$(quintet_normalize_role "$raw")
+    [[ "$r" == "stock" ]] && return 0
+    [[ "$r" =~ ^[a-z0-9-]+$ ]] || return 1
+
+    quintet_role_file "$r" >/dev/null 2>&1
 }
 
 # quintet_role_prompt <role>
 # Prints role instructions markdown if defined. Returns empty for "stock".
 quintet_role_prompt() {
+    local raw="$1"
+    [[ "$raw" == *".."* ]] && return 1
+
     local r
-    r=$(quintet_normalize_role "$1")
+    r=$(quintet_normalize_role "$raw")
     [[ "$r" == "stock" ]] && return 0
-    if quintet_role_exists "$r"; then
-        cat "$(_quintet_roles_dir)/${r}.md"
+
+    local f
+    if f="$(quintet_role_file "$r")"; then
+        cat "$f"
     else
-        log WARN "unknown role '$1'; falling back to stock baseline"
+        log WARN "unknown role '$raw'; falling back to stock baseline"
         return 0
     fi
 }
 
-# quintet_role_list
-# Lists all built-in roles plus "stock".
+# quintet_role_category <role>
+# Prints the category of a role (e.g. engineering, design, education)
+quintet_role_category() {
+    local r f
+    r=$(quintet_normalize_role "$1")
+    f="$(quintet_role_file "$r" 2>/dev/null)" || return 1
+    # resolve symlink target to get real category folder
+    local target
+    target="$(readlink -f "$f" 2>/dev/null || echo "$f")"
+    basename "$(dirname "$target")"
+}
+
+# quintet_role_list [category|--plain]
+# Lists roles. When run interactively, displays grouped categories.
+# In pipes or with --plain, prints a flat newline-separated list starting with stock.
 quintet_role_list() {
-    echo "stock"
-    local r
-    for r in "${QUINTET_ROLES[@]}"; do
-        echo "$r"
+    local mode="${1:-}"
+
+    # Plain list mode (for scripts, tests, pipes)
+    if [[ "$mode" == "--plain" ]] || [[ -n "$mode" && "$mode" == "stock" ]] || [[ ! -t 1 && -z "$mode" ]]; then
+        echo "stock"
+        local r
+        for r in "${QUINTET_ROLES[@]}"; do
+            echo "$r"
+        done
+        return 0
+    fi
+
+    # Filtered by category
+    if [[ -n "$mode" && "$mode" != "--all" ]]; then
+        local cat="$mode"
+        local cat_dir="$(_quintet_roles_dir)/${cat}"
+        if [[ ! -d "$cat_dir" ]]; then
+            echo "Unknown category: '$cat'. Supported categories: ${QUINTET_CATEGORIES[*]}" >&2
+            return 1
+        fi
+        echo "=== Category: ${cat} ==="
+        local f rname
+        for f in "${cat_dir}"/*.md; do
+            [[ -f "$f" ]] || continue
+            rname="$(basename "$f" .md)"
+            printf '  %-28s %s\n' "$rname" "$(head -n 3 "$f" | tail -n 1)"
+        done
+        return 0
+    fi
+
+    # Interactive grouped overview
+    echo "quintet roles — 49 expert personas across 9 domains"
+    echo
+    echo "  Baseline: stock (unprompted CLI default)"
+    echo
+    local c f rname
+    for c in "${QUINTET_CATEGORIES[@]}"; do
+        local cdir="$(_quintet_roles_dir)/${c}"
+        [[ -d "$cdir" ]] || continue
+        echo "── [${c^^}] ──"
+        for f in "${cdir}"/*.md; do
+            [[ -f "$f" ]] || continue
+            rname="$(basename "$f" .md)"
+            local summary
+            summary="$(grep -E '^Specialized instructions for' "$f" 2>/dev/null | sed 's/Specialized instructions for //; s/\.$//')"
+            printf '  %-28s %s\n' "$rname" "${summary:-}"
+        done
+        echo
     done
+    echo "Usage in team / worktrees specs:  quintet team 1:claude:<role> \"...\""
+    echo "Filter by category:               quintet roles <category> (e.g. quintet roles education)"
 }

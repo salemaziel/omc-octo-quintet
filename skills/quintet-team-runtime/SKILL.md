@@ -71,14 +71,17 @@ $BIN team 1:codex:implementer,1:claude::haiku "build and verify" --effort high
 
 Team and fleet also accept global flags `--model <name>` and `--effort <level>` (or environment overrides `QUINTET_<P>_MODEL`, `QUINTET_<P>_EFFORT`, `QUINTET_MODEL`, `QUINTET_EFFORT`).
 
-Available standard roles (view via `quintet roles`):
-- `implementer`: Direct implementation, scoped file edits, and verification.
-- `code-reviewer`: Read-only multi-axis reviews with severity-ranked findings.
-- `security-auditor`: Vulnerability detection, threat modeling, and OWASP Top 10 checks.
-- `test-engineer`: Deterministic test suites, edge cases, and failure-mode checks.
-- `debugger`: Root-cause diagnosis, logging, and minimal surgical fixes.
-- `devops-troubleshooter`: CI/CD, container, and environment failure triage.
-- `stock`: Baseline prompt without specialized role instructions.
+Available expert roles (view via `quintet roles` or `quintet roles <category>`):
+- **Engineering**: `system-architect` (arch), `api-designer` (api), `implementer` (impl), `refactoring-specialist` (refactor), `code-reviewer` (reviewer), `test-engineer` (test), `debugger` (debug), `database-engineer` (db), `performance-engineer` (perf), `security-auditor` (sec), `devops-troubleshooter` (devops), `site-reliability-engineer` (sre), `technical-writer` (docs).
+- **Design & Web**: `web-designer` (webdesign), `conversion-designer` (cro), `ui-designer` (ui), `design-system-architect` (design-tokens), `ux-architect` (ux), `accessibility-specialist` (a11y), `ux-researcher`.
+- **Business**: `business-strategist` (biz-strat), `competitive-analyst`, `product-manager` (pm), `pricing-strategist` (pricing).
+- **Marketing**: `brand-strategist` (brand), `copywriter` (copy), `technical-content-strategist` (tech-marketer), `growth-engineer` (growth), `seo-specialist` (seo), `launch-strategist` (launch).
+- **Sales**: `sales-engineer` (se), `outbound-strategist` (sdr), `deal-strategist` (closer), `customer-success-lead` (cs-lead).
+- **Philosophy**: `first-principles-analyst` (first-principles), `dialectical-challenger` (devils-advocate), `tech-ethicist` (ethicist), `unix-philosopher` (minimalist).
+- **Legal**: `licensing-auditor`, `privacy-officer`, `policy-author`.
+- **Operations**: `workflow-orchestrator` (scrum-master), `knowledge-architect`.
+- **Education**: `learning-scientist`, `curriculum-architect`, `instructional-designer`, `metacognition-coach`, `inclusive-educator` (udl-specialist), `ai-tutor-architect` (socratic-tutor).
+- **Baseline**: `stock` (unprompted model default).
 
 ### Pre-flight Auth Checks & Readiness Gates
 

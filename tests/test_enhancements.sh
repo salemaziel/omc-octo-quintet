@@ -59,6 +59,35 @@ else
     bad "cli: worktree singular alias failed"
 fi
 
+# Role Taxonomy Verification
+role_count="$("$BIN" roles --plain | wc -l)"
+if [[ "$role_count" -eq 50 ]]; then
+    ok "roles: master taxonomy exports 50 roles (stock + 49 expert personas)"
+else
+    bad "roles: expected 50 roles, got $role_count"
+fi
+
+if "$BIN" roles education | grep "ai-tutor-architect" >/dev/null && "$BIN" roles design | grep "web-designer" >/dev/null; then
+    ok "roles: category filtering works (education, design)"
+else
+    bad "roles: category filtering failed"
+fi
+
+(
+    source "$ROOT/lib/roles.sh"
+    if quintet_role_exists "arch" && quintet_role_exists "socratic-tutor" && quintet_role_exists "marketing/copywriter"; then
+        ok "roles: alias and namespaced resolution works"
+    else
+        bad "roles: alias resolution failed"
+    fi
+
+    if ! quintet_role_exists "../docs/x" && ! quintet_role_exists "nonexistent"; then
+        ok "roles: path traversal and unknown role rejection works"
+    else
+        bad "roles: security rejection failed"
+    fi
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 echo "── 3. Two-Phase Handoff Automation (quintet handoff review) ──"
 export QBIN="$BIN"

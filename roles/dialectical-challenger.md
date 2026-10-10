@@ -1,0 +1,1 @@
+philosophy/dialectical-challenger.md

@@ -1,0 +1,1 @@
+sales/deal-strategist.md
