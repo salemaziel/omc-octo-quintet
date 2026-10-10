@@ -2,7 +2,7 @@
 name: doctor
 description: Quick-action diagnostic skill to audit installed CLI binaries and authentication states across Quintet providers (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode). Use when verifying provider pools or diagnosing CLI readiness via /doctor.
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   category: multi-agent-orchestration
   tags: quintet, doctor, readiness, auth, diagnostics
 ---

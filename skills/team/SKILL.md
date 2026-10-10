@@ -2,7 +2,7 @@
 name: team
 description: Quick-action skill to spawn persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode) to implement features and edit files in parallel. Use for team execution via /team. For full lifecycle management, steering, and recovery, see quintet-team-runtime.
 metadata:
-  version: 0.2.0
+  version: 0.3.0
   category: multi-agent-orchestration
   tags: quintet, team, tmux, parallel-workers, file-editing
 ---
