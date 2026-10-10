@@ -12,7 +12,9 @@ Quintet is the unified multi-agent orchestrator plugin and CLI for AI coding age
 - **`lib/providers.sh`**: Provider abstraction registry (`claude`, `codex`, `agy`, `copilot`, `qwen`, `opencode`). Defines binary resolution, authentication detection, one-shot invocation, tmux worker commands, model selection, reasoning effort, safety mode, and warmup delays.
 - **`lib/roles.sh`**: Subagent worker role registry and prompt injection loader.
 - **`lib/team.sh`**: Persistent tmux worker runtime supporting `N:provider:role:model` specs, taskboard coordination, and watchdog modal diagnostics (`quintet team doctor`).
+- **`lib/worktrees.sh`**: Headless git worktree runtime (`quintet worktrees`) for parallel branch isolation and automated merges.
 - **`lib/fleet.sh`**: One-shot parallel fleet execution (tmux-by-default with fallback) with consensus synthesis, debate rounds, and diff reviews.
+- **`lib/handoff.sh`**: Two-phase review-to-team handoff pipeline automation (`quintet handoff review`).
 - **`lib/prune.sh`**: State retention & garbage collection (`quintet prune`) for stale teams and debate archives.
 - **`lib/reliability.sh`**: Circuit breaker and automatic fallback routing.
 - **`lib/tmux.sh`**: Low-level tmux window/pane management and key injection.

@@ -1,6 +1,6 @@
 ---
 name: debate
-description: Runs a two-round cross-model debate across ready AI provider CLIs, then synthesizes a converged verdict. Use when resolving contested technical decisions, evaluating architectural trade-offs, or requiring multi-model cross-critique between AI CLIs.
+description: Quick-action skill to run a two-round cross-model debate across ready AI provider CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode) and synthesize a converged verdict. Use when resolving contested decisions via /debate.
 metadata:
   version: 0.2.0
   category: multi-agent-orchestration
@@ -17,7 +17,11 @@ Executes a two-round cross-critique debate across ready AI provider CLIs to surf
 2. **Execute Debate**: Trigger the two-round cross-model debate:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" debate "Should we use gRPC or REST for this internal service?" claude,codex,agy,opencode}
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+"$QBIN" debate "Should we use gRPC or REST for this internal service?" claude,codex,agy,opencode
 ```
 
 3. **Output Validation & Fallback**:

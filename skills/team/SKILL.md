@@ -1,6 +1,6 @@
 ---
 name: team
-description: Spawns persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) to implement features, refactor code, and edit files in parallel. Use when executing multi-file implementation plans, running parallel AI workers, or building complex features concurrently.
+description: Quick-action skill to spawn persistent tmux worker teams across coding-agent CLIs (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode) to implement features and edit files in parallel. Use for team execution via /team. For full lifecycle management, steering, and recovery, see quintet-team-runtime.
 metadata:
   version: 0.2.0
   category: multi-agent-orchestration
@@ -16,30 +16,38 @@ Launches persistent tmux worker panes to execute parallel file-editing tasks acr
 1. **Pool Verification**: Run doctor to confirm active provider pool:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" doctor}
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+"$QBIN" doctor
 ```
 
 2. **Launch Worker Team**: Initialize persistent tmux worker panes with assigned subtasks:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" team 2:codex,1:opencode "build export feature" --name export --tasks "implement serializer in src/export/||add tests in tests/export/"}
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+"$QBIN" team 2:codex,1:opencode "build export feature" --name export --tasks "implement serializer in src/export/||add tests in tests/export/"
 ```
 
 3. **Task Monitoring & Status Polling**:
    - Inspect active team status and taskboard:
      ```bash
-     !{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" status --name export}
+     "$QBIN" team status export
      ```
    - Monitor worker taskboard progress across tmux worker panes until all assigned subtasks emit `DONE`.
 
 4. **Verification & Error Handling**:
    - *Validation*: Run build/test verification commands (e.g., `npm test`, `cargo test`, `pytest`) to confirm edits compile and pass tests cleanly.
-   - *Feedback Loop*: If a worker fails or emits errors, inspect worker log pane (`tmux attach -t quintet-export`), resolve failure, or re-assign subtask.
+   - *Feedback Loop*: If a worker fails or emits errors, inspect worker log pane (`"$QBIN" team capture export`), resolve failure, or re-assign subtask.
 
 5. **Shutdown & Structured Handoff**:
    - Gracefully shut down worker session:
      ```bash
-     !{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" stop export}
+     "$QBIN" team shutdown export --graceful
      ```
    - Format deliverable summary:
      ```text

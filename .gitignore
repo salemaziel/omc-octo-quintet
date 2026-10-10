@@ -1,4 +1,5 @@
 .quintet/
+.worktrees/
 .omc/
 .remember/
 *.log

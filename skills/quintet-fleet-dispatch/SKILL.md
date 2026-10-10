@@ -19,7 +19,10 @@ Fleet mode sends **one prompt** to several provider CLIs in **parallel, headless
 ## Usage
 
 ```bash
-BIN="${CLAUDE_PLUGIN_ROOT}/bin/quintet"
+BIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$BIN" ] && [ -x "$BIN" ] || BIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$BIN" ] || BIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$BIN" ] || BIN="$(command -v quintet 2>/dev/null || echo quintet)"
 
 # Fleet runs in a dedicated tmux session by default (tmux attach command displayed)
 $BIN consult "Best approach to dedupe a 10M-row stream in Rust?"          # all ready providers
@@ -139,7 +142,7 @@ The `status`/`exit` pair tells you which answers are trustworthy; a `fallback` f
 Run the doctor first so you know who's in the pool — providers with `auth=none` or an open circuit breaker are skipped silently:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/quintet doctor
+"$BIN" doctor
 ```
 
 **If zero providers are ready**, fleet has nothing to fan out to: tell the user which CLIs need authenticating (commonly `qwen`, via one interactive run) and stop, rather than reporting an empty result as success.

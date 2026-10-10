@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Audits and checks which Quintet provider CLIs (Claude, Codex, Antigravity / agy, Copilot, Qwen, OpenCode) are installed, authenticated, and ready for fleet/team orchestration. Use when checking AI model readiness, diagnosing CLI authentication, or verifying available provider pools.
+description: Quick-action diagnostic skill to audit installed CLI binaries and authentication states across Quintet providers (Claude, Codex, Antigravity, Copilot, Qwen, OpenCode). Use when verifying provider pools or diagnosing CLI readiness via /doctor.
 metadata:
   version: 0.2.0
   category: multi-agent-orchestration
@@ -16,7 +16,11 @@ Audits installed CLI binaries and authentication states across all Quintet provi
 1. **Execute Readiness Check**:
 
 ```bash
-!{QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"; [ -x "$QBIN" ] || QBIN=quintet; "$QBIN" doctor}
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+"$QBIN" doctor
 ```
 
 2. **Binary Resolution Guard**:

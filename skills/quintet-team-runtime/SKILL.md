@@ -23,7 +23,10 @@ Attach to watch live: `tmux attach -t quintet-<name>` (detach with `Ctrl-b d`).
 The lifecycle is four phases — launch, monitor, steer, tear down.
 
 ```bash
-BIN="${CLAUDE_PLUGIN_ROOT}/bin/quintet"
+BIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$BIN" ] && [ -x "$BIN" ] || BIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$BIN" ] || BIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$BIN" ] || BIN="$(command -v quintet 2>/dev/null || echo quintet)"
 
 # 1. Launch (distinct subtask per worker, in spec order)
 $BIN team 2:codex,1:agy,1:qwen "build the export feature" \

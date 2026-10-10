@@ -90,6 +90,17 @@ quintet review  "$(git diff HEAD~1)" claude,codex --json | jq '.[] | {provider, 
 # Non-tmux escape hatch
 quintet fleet --no-tmux "quick advisory prompt" codex,claude
 
+# Worktrees mode — headless git worktrees with branch isolation and clean merge
+quintet worktrees 2:codex:implementer,1:claude:implementer "build auth module" \
+    --name auth-feat --tasks "implement JWT in src/auth/||add unit tests in tests/auth/"
+quintet worktrees status auth-feat
+quintet worktrees merge  auth-feat --branch feat/auth-integrated
+quintet worktrees abort  auth-feat
+
+# Two-phase handoff automation — review diff and dispatch remediation team
+quintet review "$(git diff HEAD~1)" claude,agy --json | \
+    quintet handoff review - --spec 2:codex:implementer,1:claude:implementer --run
+
 # Maintenance & diagnostics
 quintet doctor       # provider/tmux/jq readiness
 quintet providers    # per-provider install/auth/ready

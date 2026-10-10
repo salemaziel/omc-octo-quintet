@@ -42,3 +42,18 @@ quintet team 1:codex,1:claude,1:agy "implement token-bucket rate limiting" \
 ```
 
 The router's job ends at *choosing the mode and handing off*. The procedure skills own the launch/monitor/verify loop and the synthesis duty.
+
+## Automated Two-Phase Handoff ("Review and Fix")
+
+When a user asks to audit/review code and fix the findings, use `quintet handoff review` to pipe findings directly into a remediation team or worktree fleet:
+
+```bash
+# 1. Review diff/files with JSON output, then hand off directly to a repair team:
+quintet review "$(git diff HEAD~1)" claude,agy,codex --json | \
+    quintet handoff review - --spec 2:codex:implementer,1:claude:implementer --run
+
+# Or generate the command for inspection before execution:
+quintet review "$(git diff HEAD~1)" claude,agy --json | \
+    quintet handoff review - --spec 2:codex:implementer --mode worktrees
+```
+Handoff automatically deduplicates findings, filters to high/medium severity, groups tasks by target file to ensure disjoint file ownership, and formats the `--tasks` payload.

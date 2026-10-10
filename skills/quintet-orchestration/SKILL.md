@@ -5,7 +5,7 @@ description: Orchestrate multiple coding-agent CLIs (Claude Code, OpenAI Codex, 
 
 # Quintet Orchestration
 
-Quintet drives six coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen`, `opencode` — through one entry point: `${CLAUDE_PLUGIN_ROOT}/bin/quintet`.
+Quintet drives six coding-agent CLIs — `claude`, `codex`, `agy`, `copilot`, `qwen`, `opencode` — through one unified entry point (`bin/quintet`).
 
 **This skill is the router.** It does exactly four things: check readiness, classify the request (edits vs opinions), pick the mode, and hand off to the skill that owns the procedure. It does **not** run the launch/monitor/verify loop, the debate rounds, or the synthesis — those belong to the procedure skills. Keeping that boundary clean is the entire point of having a router.
 
@@ -28,7 +28,11 @@ The three execution modes it routes to:
 Run the doctor so you only route to providers that are actually ready:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/quintet doctor
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$HOME/.gemini/config/plugins/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$HOME/.gemini/extensions/quintet/bin/quintet"
+[ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+"$QBIN" doctor
 ```
 
 This returns a per-provider readiness line. Never claim a provider ran if `doctor` shows it unready. Build your pool from the providers shown `ready=yes`.

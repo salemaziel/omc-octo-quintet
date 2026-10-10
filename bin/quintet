@@ -23,7 +23,9 @@ source "${QUINTET_ROOT}/lib/roles.sh"
 source "${QUINTET_ROOT}/lib/reliability.sh"
 source "${QUINTET_ROOT}/lib/tmux.sh"
 source "${QUINTET_ROOT}/lib/team.sh"
+source "${QUINTET_ROOT}/lib/worktrees.sh"
 source "${QUINTET_ROOT}/lib/fleet.sh"
+source "${QUINTET_ROOT}/lib/handoff.sh"
 source "${QUINTET_ROOT}/lib/prune.sh"
 
 VERSION="$(have_jq && jq -r '.version' "${QUINTET_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo "0.2.0")"
@@ -64,6 +66,14 @@ TEAM MODE (persistent tmux worker teams):
   --tasks      one pre-split subtask per worker, separated by ||
   --skip-auth-check  skip the (heuristic) provider auth pre-flight
 
+WORKTREE MODE (headless git worktrees, disjoint branch isolation):
+  quintet worktrees <spec> "<task>" [--tasks "t1||..."] [--base REF] [--name NAME] [--no-tmux]
+  quintet worktrees status   <name>
+  quintet worktrees merge    <name> [--branch TARGET]
+  quintet worktrees abort    <name> [--keep-branches]
+  quintet worktrees list
+  (alias: 'quintet worktree ...')
+
 FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
   quintet fleet   "<prompt>" [providers] [--no-tmux] [--no-mcp] [--safe] [--model V] [--effort V]
                   [--deadline SECS]
@@ -83,6 +93,10 @@ FLEET MODE (one-shot multi-AI dispatch, runs in tmux by default):
                are skipped under 20 s left); default: rounds x slowest timeout + 120 s
   Seat status: 0:ok, 0:truncated (over 2 MB), 1:empty, N:too-large, 124:timeout
   (any output shown as partial), 125:quota (provider skipped for 1 h), N:<class>.
+
+HANDOFF AUTOMATION (two-phase review -> team/worktrees):
+  quintet handoff review <review.json|-> [--spec SPEC] [--mode team|worktrees] [--name NAME]
+                         [--min-severity med] [--run]
 
 UTILITIES:
   quintet doctor          # check CLIs, auth, tmux, jq
@@ -151,6 +165,24 @@ main() {
         fleet|consult) quintet_fleet_parallel "$@" ;;
         debate)        quintet_fleet_debate "$@" ;;
         review)        quintet_fleet_review "$@" ;;
+        worktrees|worktree)
+            local sub="${1:-}"
+            case "$sub" in
+                status)   shift; quintet_worktrees_status "$@" ;;
+                merge)    shift; quintet_worktrees_merge "$@" ;;
+                abort)    shift; quintet_worktrees_abort "$@" ;;
+                list)     shift; quintet_worktrees_list ;;
+                start)    shift; quintet_worktrees_start "$@" ;;
+                ""|--help|-h) usage ;;
+                *)        quintet_worktrees_start "$@" ;;
+            esac ;;
+        handoff)
+            local sub="${1:-}"
+            case "$sub" in
+                review) shift; quintet_handoff_review "$@" ;;
+                ""|--help|-h) usage ;;
+                *) die "handoff: unknown handoff type '$sub' (use: quintet handoff review ...)" ;;
+            esac ;;
         doctor)        cmd_doctor ;;
         providers)     cmd_providers ;;
         roles)         quintet_role_list ;;

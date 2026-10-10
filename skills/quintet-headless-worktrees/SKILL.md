@@ -15,6 +15,29 @@ Drive several coding-agent CLIs as **one-shot, non-interactive processes** (`cod
 
 The deciding question: *do agents mutate files in parallel and need isolation + clean merges?* If yes, this skill.
 
+## 🚀 First-Class CLI Usage (`quintet worktrees`)
+
+Quintet provides an automated, first-class command that handles worktree creation, headless dispatch, tmux session isolation, and clean branch merging automatically:
+
+```bash
+QBIN="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/quintet}"
+[ -n "$QBIN" ] && [ -x "$QBIN" ] || QBIN="$(command -v quintet 2>/dev/null || echo quintet)"
+
+# 1. Start headless worktree dispatch
+"$QBIN" worktrees 2:codex:implementer,1:claude:implementer "build auth module" \
+    --name auth-feat \
+    --tasks "implement JWT in src/auth/||add unit tests in tests/auth/"
+
+# 2. Check worker status & modified files
+"$QBIN" worktrees status auth-feat
+
+# 3. Merge completed branches into an integration branch and clean up
+"$QBIN" worktrees merge auth-feat --branch feat/auth-integrated
+
+# Abort and clean up in case of failure
+"$QBIN" worktrees abort auth-feat
+```
+
 ## The core model
 
 ```
